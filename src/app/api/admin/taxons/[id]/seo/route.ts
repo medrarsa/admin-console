@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServerClient } from "@/lib/supabase/server";
+import createServerClient from "@/lib/supabase/server"
+
 import { z } from "zod";
 
 const SeoSchema = z.object({

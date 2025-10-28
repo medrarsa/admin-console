@@ -4,7 +4,8 @@
 // يدعم: POST (رفع/استبدال), PATCH (تحديث ALT), DELETE (حذف)
 
 import { NextRequest, NextResponse } from "next/server";
-import { createServerClient } from "@/lib/supabase/server";
+import createServerClient from "@/lib/supabase/server"
+
 import { randomUUID } from "crypto";
 import path from "path";
 import fs from "fs/promises";
