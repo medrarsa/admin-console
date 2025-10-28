@@ -15,8 +15,8 @@ async function _createServerSupabase(): Promise<SupabaseClient> {
   // تخزين جلسة “وهمي” لمنع أخطاء التخزين على السيرفر
   const storage = {
     getItem: (k: string) => cookieStore.get(k)?.value ?? null,
-    setItem: (_k: string, _v: string) => {},
-    removeItem: (_k: string) => {},
+    setItem: () => {},
+    removeItem: () => {},
   };
 
   return supaCreateClient(url, anon, {

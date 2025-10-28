@@ -4,7 +4,7 @@ import { createServerSupabase } from "@/lib/supabase/server";
 /** body: { parentId: string|null, level: "root"|"sub"|"seg", order: string[] } */
 export async function POST(req: Request) {
   const supa = await createServerSupabase();
-  const { parentId, level, order } = await req.json();
+  const { parentId: _parentId, level: _level, order } = await req.json();
 
   if (!Array.isArray(order))
     return new NextResponse("invalid body", { status: 400 });
