@@ -1,6 +1,6 @@
 // src/app/admin/_components/AdminGuard.tsx
 import { ReactNode } from "react";
-import { createSupabaseServer } from "@/lib/supabase/server";
+import createServerClient from "@/lib/supabase/server";
 
 const ALLOWED = [
   "admin",
@@ -16,7 +16,7 @@ export default async function AdminGuard({
 }: {
   children: ReactNode;
 }) {
-  const supabase = await createSupabaseServer();
+  const supabase = await createServerClient();
 
   // 1) المستخدم
   const {

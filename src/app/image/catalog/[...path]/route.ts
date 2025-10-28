@@ -21,16 +21,18 @@ function contentType(filePath: string) {
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { path: string[] } }
+  context: { params: Promise<{ path: string[] }> }
 ) {
   // مثال: params.path = ["toyota","logo-1700000.png"]
+  const { path: p } = await context.params;
+
   const absolutePath = path.join(
     process.cwd(),
     "src",
     "image",
     "catalog",
     "brands",
-    ...params.path.map(decodeURIComponent)
+    ...p.map(decodeURIComponent)
   );
 
   try {

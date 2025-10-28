@@ -1,7 +1,6 @@
 // src/app/api/admin/taxons/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import createServerClient from "@/lib/supabase/server"
-
+import createServerClient from "@/lib/supabase/server";
 import { z } from "zod";
 
 const PatchSchema = z.object({
@@ -9,16 +8,16 @@ const PatchSchema = z.object({
   status: z.enum(["active", "hidden"]).optional(),
   hide_products: z.boolean().optional(),
   image: z.string().min(1).nullable().optional(),
-  image_alt: z.string().min(1).nullable().optional(), // ← جديد
+  image_alt: z.string().min(1).nullable().optional(),
 });
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
     const supabase = await createServerClient();
-    const id = params.id;
+    const { id } = await context.params;
     const payload = PatchSchema.parse(await req.json());
 
     const { data: taxon, error: exErr } = await supabase
@@ -35,7 +34,7 @@ export async function PATCH(
       );
     }
 
-    const updates: Record<string, any> = {};
+    const updates: Record<string, unknown> = {};
     if (payload.name !== undefined) updates.name = payload.name;
     if (payload.status !== undefined) updates.status = payload.status;
     if (payload.hide_products !== undefined)
@@ -55,13 +54,14 @@ export async function PATCH(
       .select()
       .single();
 
-    if (error)
+    if (error) {
       return NextResponse.json({ error: error.message }, { status: 400 });
+    }
 
     return NextResponse.json({ ok: true, data });
-  } catch (e: any) {
+  } catch (e) {
     return NextResponse.json(
-      { error: e?.message || "Invalid payload" },
+      { error: e instanceof Error ? e.message : "Invalid payload" },
       { status: 400 }
     );
   }
@@ -69,10 +69,10 @@ export async function PATCH(
 
 export async function DELETE(
   _req: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   const supabase = await createServerClient();
-  const id = params.id;
+  const { id } = await context.params;
 
   const { count: childrenCount } = await supabase
     .from("taxons")
@@ -108,8 +108,9 @@ export async function DELETE(
     })
     .eq("id", id);
 
-  if (error)
+  if (error) {
     return NextResponse.json({ error: error.message }, { status: 400 });
+  }
 
   return NextResponse.json({ ok: true });
 }

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import createServerClient from "@/lib/supabase/server"
-
+import createServerClient from "@/lib/supabase/server";
 import { z } from "zod";
 
 const SeoSchema = z.object({
@@ -20,28 +19,32 @@ const SeoSchema = z.object({
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   const supabase = await createServerClient();
+  const { id } = await context.params;
+
   const { data, error } = await supabase
     .from("seo_pages")
     .select("*")
     .eq("entity_type", "taxon")
-    .eq("entity_id", params.id)
+    .eq("entity_id", id)
     .eq("lang", "ar")
     .maybeSingle();
 
-  if (error)
+  if (error) {
     return NextResponse.json({ error: error.message }, { status: 400 });
+  }
   return NextResponse.json({ ok: true, data });
 }
 
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   const supabase = await createServerClient();
-  const taxonId = params.id;
+  const { id: taxonId } = await context.params;
+
   const body = SeoSchema.parse(await req.json());
   const lang = body.lang ?? "ar";
 
@@ -78,8 +81,10 @@ export async function PUT(
       .eq("id", existing.id)
       .select()
       .single();
-    if (error)
+
+    if (error) {
       return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     return NextResponse.json({ ok: true, data });
   } else {
     const { data, error } = await supabase
@@ -87,8 +92,10 @@ export async function PUT(
       .insert(payload)
       .select()
       .single();
-    if (error)
+
+    if (error) {
       return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     return NextResponse.json({ ok: true, data });
   }
 }

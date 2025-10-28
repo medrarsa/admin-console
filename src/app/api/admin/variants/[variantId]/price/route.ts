@@ -11,9 +11,9 @@ const BodySchema = z.object({
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { variantId: string } } // اسم المجلد = اسم المفاتيح هنا
+  context: { params: Promise<{ variantId: string }> }
 ) {
-  const variantId = params.variantId;
+  const { variantId } = await context.params;
   const body = BodySchema.parse(await req.json());
 
   const supabase = await createServerSupabase();
@@ -33,8 +33,9 @@ export async function PATCH(
       .from("variant_prices")
       .update({ ends_at: new Date().toISOString() })
       .eq("id", current.id);
-    if (uErr)
+    if (uErr) {
       return NextResponse.json({ error: uErr.message }, { status: 400 });
+    }
   }
 
   // أضف سعرًا جديدًا
@@ -47,8 +48,9 @@ export async function PATCH(
     ends_at: body.ends_at ?? null,
     price_type: "retail",
   });
-  if (insErr)
+  if (insErr) {
     return NextResponse.json({ error: insErr.message }, { status: 400 });
+  }
 
   return NextResponse.json({ success: true }, { status: 200 });
 }

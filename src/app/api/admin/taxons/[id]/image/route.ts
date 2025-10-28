@@ -4,7 +4,7 @@
 // يدعم: POST (رفع/استبدال), PATCH (تحديث ALT), DELETE (حذف)
 
 import { NextRequest, NextResponse } from "next/server";
-import createServerClient from "@/lib/supabase/server"
+import createServerClient from "@/lib/supabase/server";
 
 import { randomUUID } from "crypto";
 import path from "path";
@@ -13,14 +13,16 @@ import fs from "fs/promises";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-async function ensureTaxonExists(supabase: any, id: string) {
+type TaxonRow = { id: string; image: string | null };
+
+async function ensureTaxonExists(supabase: ReturnType<typeof createServerClient> extends Promise<infer C> ? C : never, id: string) {
   const { data } = await supabase
     .from("taxons")
     .select("id,image")
     .eq("id", id)
     .is("archived_at", null)
     .single();
-  return data as { id: string; image: string | null } | null;
+  return (data as TaxonRow | null) ?? null;
 }
 function getPublicDir() {
   return path.join(process.cwd(), "public", "image", "catalog");
@@ -49,17 +51,19 @@ function absPathFromPublicUrl(publicUrl: string) {
 /** POST: رفع/استبدال الصورة + تحديث image_alt */
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id: taxonId } = await context.params;
     const supabase = await createServerClient();
-    const taxonId = params.id;
+
     const found = await ensureTaxonExists(supabase, taxonId);
-    if (!found)
+    if (!found) {
       return NextResponse.json(
         { error: "Taxon not found or archived" },
         { status: 404 }
       );
+    }
 
     const form = await req.formData();
     const file = form.get("file");
@@ -99,9 +103,9 @@ export async function POST(
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
     return NextResponse.json({ ok: true, url: publicUrl, data });
-  } catch (e: any) {
+  } catch (e) {
     return NextResponse.json(
-      { error: e?.message || "Upload failed" },
+      { error: e instanceof Error ? e.message : String(e) },
       { status: 400 }
     );
   }
@@ -110,17 +114,19 @@ export async function POST(
 /** PATCH: تحديث ALT فقط */
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
+  const { id: taxonId } = await context.params;
   const supabase = await createServerClient();
-  const taxonId = params.id;
+
   const { alt } = (await req.json()) as { alt?: string | null };
   const exists = await ensureTaxonExists(supabase, taxonId);
-  if (!exists)
+  if (!exists) {
     return NextResponse.json(
       { error: "Taxon not found or archived" },
       { status: 404 }
     );
+  }
 
   const { data, error } = await supabase
     .from("taxons")
@@ -129,24 +135,27 @@ export async function PATCH(
     .select()
     .single();
 
-  if (error)
+  if (error) {
     return NextResponse.json({ error: error.message }, { status: 400 });
+  }
   return NextResponse.json({ ok: true, data });
 }
 
 /** DELETE: حذف الصورة من القرص وتفريغ الحقول */
 export async function DELETE(
   _req: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
+  const { id: taxonId } = await context.params;
   const supabase = await createServerClient();
-  const taxonId = params.id;
+
   const found = await ensureTaxonExists(supabase, taxonId);
-  if (!found)
+  if (!found) {
     return NextResponse.json(
       { error: "Taxon not found or archived" },
       { status: 404 }
     );
+  }
 
   if (found.image) {
     await unlinkIfExists(absPathFromPublicUrl(found.image));
@@ -157,7 +166,8 @@ export async function DELETE(
     .update({ image: null, image_alt: null })
     .eq("id", taxonId);
 
-  if (error)
+  if (error) {
     return NextResponse.json({ error: error.message }, { status: 400 });
+  }
   return NextResponse.json({ ok: true });
 }
