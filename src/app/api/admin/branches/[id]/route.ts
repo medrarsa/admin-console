@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import createClient from "@/lib/supabase/server"
-
+import createClient from "@/lib/supabase/server";
 import { z } from "zod";
 
 function assertAdmin(req: NextRequest) {
@@ -23,30 +22,41 @@ const UpdateBrandSchema = z.object({
   banner: z.string().url().nullable().optional(),
   is_active: z.boolean().optional(),
   seo: z.object({
-      slug: z.string().min(1).max(200).optional(),
-      meta_title: z.string().optional(),
-      meta_description: z.string().optional(),
-      is_active: z.boolean().optional(),
-    }).optional(),
+    slug: z.string().min(1).max(200).optional(),
+    meta_title: z.string().optional(),
+    meta_description: z.string().optional(),
+    is_active: z.boolean().optional(),
+  }).optional(),
 });
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+/**
+ * Next.js 15: context.params هي Promise
+ * لذلك لازم ننتظرها قبل استخدام id.
+ */
+export async function PATCH(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
   const guard = assertAdmin(req);
   if (guard) return guard;
 
   const supabase = await createClient();
-  const id = params.id;
+  const { id } = await context.params;
 
   const body = await req.json();
   const parsed = UpdateBrandSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ message: "Validation failed", errors: parsed.error.flatten() }, { status: 422 });
+    return NextResponse.json(
+      { message: "Validation failed", errors: parsed.error.flatten() },
+      { status: 422 }
+    );
   }
   const payload = parsed.data;
 
-  const update: any = {};
+  // نبني كائن التحديث بدون استخدام any
+  const update: Record<string, unknown> = {};
   for (const k of ["name","description","ar_char","en_char","logo","banner","is_active"] as const) {
-    if (k in payload) update[k] = (payload as any)[k];
+    if (k in payload) update[k] = (payload as Record<string, unknown>)[k];
   }
 
   if (Object.keys(update).length) {
@@ -55,7 +65,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 
   if (payload.seo) {
-    const seo: any = { entity_type: "brand", entity_id: id, lang: "ar" };
+    const seo: Record<string, unknown> = { entity_type: "brand", entity_id: id, lang: "ar" };
     if (payload.seo.slug !== undefined) seo.slug = payload.seo.slug;
     if (payload.seo.meta_title !== undefined) seo.meta_title = payload.seo.meta_title;
     if (payload.seo.meta_description !== undefined) seo.meta_description = payload.seo.meta_description;
@@ -65,19 +75,25 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       .from("seo_pages")
       .upsert(seo, { onConflict: "entity_type,entity_id,lang" });
     if (seoErr) {
-      return NextResponse.json({ message: "Brand updated but SEO failed", seo_error: seoErr }, { status: 207 });
+      return NextResponse.json(
+        { message: "Brand updated but SEO failed", seo_error: seoErr },
+        { status: 207 }
+      );
     }
   }
 
   return NextResponse.json({ ok: true });
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
   const guard = assertAdmin(req);
   if (guard) return guard;
 
   const supabase = await createClient();
-  const id = params.id;
+  const { id } = await context.params;
 
   const { error: seoDelErr } = await supabase
     .from("seo_pages")
