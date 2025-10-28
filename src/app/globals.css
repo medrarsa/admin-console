@@ -1,0 +1,823 @@
+@import "tailwindcss";
+
+/* ===================== ألوان عامة (بدون تغيير القياسات) ===================== */
+:root {
+  --bg-deep: #0a3b42;
+  --bg-deep-2: #09353b;
+  --ink: #ffffff;
+  --ink-2: #e5f6f8;
+  --line: #e5e7eb;
+  --line-soft: #eef0f2;
+  --ring: rgba(0, 114, 130, 0.25);
+  --chip-line: #e6ebf0;
+  --chip-bg: #ffffff;
+  --accent: #15a3ad;
+  --accent-2: #0ea5b1;
+  --accent-3: #0bb4c2;
+  --danger: #ef4444;
+}
+
+/* تمركز الحاوية وشريط الأدوات */
+.salla-wrap {
+  max-width: 1280px;
+  margin-inline: auto;
+  padding: 12px 16px;
+}
+.salla-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.salla-input {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px 12px;
+  font-size: 14px;
+  outline: none;
+  transition: box-shadow 0.2s ease, border-color 0.2s ease,
+    background-color 0.2s ease;
+}
+.salla-input:hover {
+  background: rgba(255, 255, 255, 0.98);
+}
+.salla-input:focus {
+  box-shadow: 0 0 0 3px var(--ring);
+  border-color: #d1d5db;
+}
+
+/* شبكة */
+.salla-grid {
+  display: grid;
+  gap: 14px;
+}
+@media (min-width: 768px) {
+  .salla-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (min-width: 1024px) {
+  .salla-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* البطاقة */
+.salla-card {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.98),
+    rgba(255, 255, 255, 0.96)
+  );
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px -15px rgba(0, 0, 0, 0.18),
+    0 1px 3px rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+  transition: transform 0.12s ease, box-shadow 0.2s ease, border-color 0.2s ease,
+    background 0.2s ease;
+  will-change: transform;
+}
+.salla-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 40px -14px rgba(0, 0, 0, 0.22);
+}
+.salla-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  background: linear-gradient(
+    180deg,
+    rgba(10, 59, 66, 0.05),
+    rgba(10, 59, 66, 0)
+  );
+  backdrop-filter: saturate(120%);
+}
+.salla-badge {
+  font-size: 12px;
+  background: #f7f7f7;
+  border: 1px solid #e6e6e6;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+/* إطار الصورة الأحمر */
+.salla-media {
+  position: relative;
+  height: 260px;
+  background: #fff;
+  border: 2px solid var(--danger);
+  border-radius: 8px;
+  margin: 10px;
+  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.06);
+}
+.salla-media .logo {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  height: 20px;
+  opacity: 0.9;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1));
+}
+.salla-media .pin {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 6px;
+  font-size: 12px;
+  box-shadow: 0 2px 10px -6px rgba(0, 0, 0, 0.25);
+}
+.salla-media .add {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  transition: background 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.salla-media .add:hover {
+  background: #fffffffa;
+  border-color: #cdd3d9;
+  box-shadow: 0 6px 24px -12px rgba(0, 0, 0, 0.25);
+}
+.salla-media .empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9ca3af;
+}
+
+/* صف الحقول المصغّر (input-group) */
+.mini-row {
+  display: grid;
+  grid-template-columns: 1fr 150px 150px;
+  gap: 8px;
+  padding: 4px 12px 12px;
+}
+.ig {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+  transition: box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+.ig:has(input:focus) {
+  border-color: #d1d5db;
+  box-shadow: 0 0 0 3px var(--ring);
+}
+.ig-addon {
+  background: #f9fafb;
+  border-inline-start: 1px solid var(--line);
+  padding: 6px 8px;
+  font-size: 12px;
+  color: #6b7280;
+}
+.ig-input {
+  flex: 1;
+  padding: 6px 8px;
+  border: 0;
+  outline: none;
+  background: #fff;
+  font-size: 12px;
+}
+.ig-input.center {
+  text-align: center;
+}
+
+/* شريط الخيارات */
+.salla-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 12px 8px;
+}
+.salla-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--chip-line);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  background: var(--chip-bg);
+  transition: transform 0.08s ease, box-shadow 0.15s ease,
+    border-color 0.2s ease;
+}
+.salla-chip:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px -16px rgba(0, 0, 0, 0.2);
+  border-color: #dde3e9;
+}
+
+/* الذيل */
+.salla-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--line-soft);
+  padding: 10px 12px;
+  background: linear-gradient(
+    180deg,
+    rgba(10, 59, 66, 0),
+    rgba(10, 59, 66, 0.04)
+  );
+}
+.salla-menu {
+  position: relative;
+}
+.salla-menu > summary {
+  cursor: pointer;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: #fff;
+  list-style: none;
+  transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.salla-menu > summary:hover {
+  background: #fafcfd;
+  border-color: #dbe2e8;
+}
+.salla-menu .menu {
+  position: absolute;
+  left: 0;
+  z-index: 10;
+  margin-top: 6px;
+  width: 220px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 20px 48px -18px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+.salla-menu .menu button {
+  display: block;
+  width: 100%;
+  text-align: right;
+  padding: 10px 12px;
+  border-radius: 8px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.salla-menu .menu button:hover {
+  background: #f8fafc;
+}
+.salla-menu .menu .danger {
+  color: #dc2626;
+}
+.salla-save {
+  background: var(--bg-deep);
+  color: #fff;
+  border-radius: 8px;
+  padding: 8px 14px;
+  border: 0;
+  transition: filter 0.15s ease, transform 0.08s ease;
+}
+.salla-save:hover {
+  filter: brightness(0.97);
+  transform: translateY(-1px);
+}
+
+/* المودال */
+.salla-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 0.4);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 24px;
+  z-index: 50;
+  backdrop-filter: blur(2px);
+}
+.salla-modal {
+  background: linear-gradient(180deg, #fff, #fbfeff);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 24px 80px -30px rgba(0, 0, 0, 0.35),
+    0 12px 30px -20px rgba(0, 0, 0, 0.25);
+  max-width: 980px;
+  width: 95%;
+}
+.salla-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line-soft);
+  padding: 12px 16px;
+  background: linear-gradient(
+    180deg,
+    rgba(10, 59, 66, 0.04),
+    rgba(10, 59, 66, 0)
+  );
+}
+.salla-modal-body {
+  padding: 16px;
+}
+.salla-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line-soft);
+}
+
+/* أقسام النموذج */
+.section {
+  border: 1px solid var(--line);
+  background: #fff;
+  padding: 12px;
+  border-radius: 10px;
+}
+.section-title {
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: #374151;
+  font-size: 13px;
+}
+.label-sm {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: #6b7280;
+}
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+@media (max-width: 768px) {
+  .grid2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* محرر الوصف */
+.desc-toolbar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  background: #fff;
+  padding: 8px;
+}
+.desc-btn {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  transition: background 0.15s ease, border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.desc-btn:hover {
+  background: #f8fafc;
+  border-color: #dbe2e8;
+}
+.desc-editor {
+  min-height: 140px;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-top: 0;
+  padding: 10px;
+  border-radius: 0 0 10px 10px;
+  background: #fff;
+}
+
+/* ===== بطاقة سلة المطابقة 100% ===== */
+.card-salla {
+  background: #fff;
+  border: 1px solid #e6ebf0;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px #0000000a;
+  overflow: hidden;
+  transition: box-shadow 0.2s ease, transform 0.12s ease;
+}
+.card-salla:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 40px -18px rgba(0, 0, 0, 0.2);
+}
+.card-salla .head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 6px 10px;
+}
+.badge-salla {
+  font-size: 12px;
+  background: #f6f7f8;
+  border: 1px solid #e6e6e6;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.media-salla {
+  position: relative;
+  margin: 0 10px 10px;
+  height: 260px;
+  border: 2px solid var(--danger);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.05);
+}
+.media-salla .brand {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  height: 20px;
+}
+.media-salla .tag {
+  position: absolute;
+  top: 80px;
+  right: 8px;
+  background: var(--danger);
+  color: #fff;
+  border-radius: 8px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+.media-salla .pin {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  border: 1px solid #e6ebf0;
+  background: #fff;
+  border-radius: 8px;
+  padding: 4px 6px;
+  box-shadow: 0 10px 24px -18px rgba(0, 0, 0, 0.25);
+}
+.media-salla .add {
+  position: absolute;
+  bottom: 8px;
+  left: 12px;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  transition: background 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+.media-salla .add:hover {
+  background: #fffffffa;
+  border-color: #cfd6dc;
+  box-shadow: 0 8px 28px -16px rgba(0, 0, 0, 0.22);
+}
+.media-salla .logo-toy {
+  position: absolute;
+  bottom: 8px;
+  right: 12px;
+  height: 20px;
+}
+.media-salla .empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9ca3af;
+}
+.media-salla img.fit {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  max-height: 100%;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+/* input-group المصغّرة */
+.row-mini {
+  display: grid;
+  grid-template-columns: 1fr 78px 90px;
+  gap: 8px;
+  padding: 0 10px 8px;
+}
+.ig {
+  display: flex;
+  align-items: center;
+  border: 1px solid #e6ebf0;
+  background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.ig .addon {
+  background: #f7f9fb;
+  border-inline-start: 1px solid #e6ebf0;
+  color: #667085;
+  font-size: 12px;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ig input {
+  flex: 1;
+  padding: 7px 8px;
+  border: 0;
+  outline: 0;
+  font-size: 12px;
+}
+.ig input.center {
+  text-align: center;
+}
+
+/* شريط الخيارات */
+.opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 10px 8px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #e6ebf0;
+  background: #fff;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  transition: transform 0.08s ease, box-shadow 0.15s ease,
+    border-color 0.2s ease;
+}
+.chip:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 30px -18px rgba(0, 0, 0, 0.22);
+  border-color: #dde3e9;
+}
+.chip .icon {
+  opacity: 0.75;
+}
+.chip.toggle {
+  padding: 0;
+}
+.toggle {
+  display: flex;
+  align-items: center;
+  border: 1px solid #e6ebf0;
+  background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.toggle button {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.toggle .active {
+  background: #f7f9fb;
+}
+
+/* بادجات التصنيف */
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 10px 8px;
+}
+.tag-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #e6ebf0;
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px 10px;
+  font-size: 12px;
+  transition: transform 0.08s ease, box-shadow 0.15s ease,
+    border-color 0.2s ease;
+}
+.tag-pill:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px -16px rgba(0, 0, 0, 0.2);
+  border-color: #dde3e9;
+}
+.tag-pill .x {
+  border: 1px solid #e6ebf0;
+  background: #fff;
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+
+/* الذيل */
+.foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid #e6ebf0;
+  padding: 10px;
+}
+.more {
+  position: relative;
+}
+.more > summary {
+  list-style: none;
+  cursor: pointer;
+  border: 1px solid #e6ebf0;
+  border-radius: 8px;
+  background: #fff;
+  padding: 6px 10px;
+  transition: background 0.15s ease, border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.more > summary:hover {
+  background: #fafcfd;
+  border-color: #dbe2e8;
+}
+.more .menu {
+  position: absolute;
+  left: 0;
+  z-index: 10;
+  margin-top: 6px;
+  width: 210px;
+  border: 1px solid #e6ebf0;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 20px 48px -18px rgba(0, 0, 0, 0.25);
+}
+.more .menu button {
+  display: block;
+  width: 100%;
+  text-align: right;
+  padding: 10px 12px;
+  border-radius: 8px;
+}
+.more .menu button:hover {
+  background: #f7f9fb;
+}
+.btn-save {
+  background: var(--accent) !important;
+  color: #fff;
+  border-radius: 8px;
+  padding: 10px 16px;
+  border: 0;
+  transition: filter 0.15s ease, transform 0.08s ease;
+}
+.btn-save:hover {
+  filter: brightness(0.96);
+  transform: translateY(-1px);
+}
+
+/* صف سفلي ثابت مثل سلة */
+.actions-bottom {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 10px;
+}
+.btn-main {
+  width: 100%;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 8px;
+  padding: 10px 16px;
+  border: 0;
+  transition: filter 0.15s ease, transform 0.08s ease;
+}
+.btn-main:hover {
+  filter: brightness(0.96);
+  transform: translateY(-1px);
+}
+
+/* زر صغير دائري يمين/يسار */
+.btn-icon {
+  border: 1px solid #e6ebf0;
+  background: #fff;
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+/* إطار الصورة وتفاصيله – قيمك نفسها مع تحسينات خفيفة */
+.media-salla {
+  height: 258px;
+  border: 2px solid var(--danger);
+  border-radius: 8px;
+  margin: 8px 10px 10px;
+}
+.media-salla .add {
+  left: 14px;
+  bottom: 10px;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+.media-salla .pin {
+  top: 8px;
+  left: 8px;
+  border-radius: 8px;
+}
+.media-salla .tag {
+  top: 84px;
+  right: 8px;
+  border-radius: 8px;
+  padding: 1px 8px;
+  font-size: 12px;
+}
+
+/* الرأس والبادجات */
+.card-salla .head {
+  padding: 6px 10px;
+}
+.badge-salla {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+/* صف الحقول المصغّر */
+.row-mini {
+  grid-template-columns: 1fr 86px 92px;
+  gap: 8px;
+  padding: 0 10px 8px;
+}
+.ig {
+  height: 36px;
+}
+.ig .addon {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  background: #f7f9fb;
+  border-inline-start: 1px solid #e6ebf0;
+}
+.ig input {
+  height: 100%;
+  font-size: 12px;
+  padding: 0 8px;
+}
+
+/* الشريط الأوسط (الخيارات) */
+.opts {
+  gap: 8px;
+  padding: 0 10px 8px;
+}
+.chip {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+/* بادجات التصنيف */
+.tag-pill {
+  padding: 7px 10px;
+  font-size: 12px;
+}
+
+/* الذيل */
+.foot {
+  padding: 8px 10px;
+}
+
+/* زر الحفظ كامل العرض */
+.btn-save {
+  background: var(--accent) !important;
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 16px;
+}
+.btn-save:hover {
+  filter: brightness(0.96);
+}
+
+/* الحقول: العملة ر.س داخل الـ addon */
+.ig .addon.currency {
+  min-width: 34px;
+  justify-content: center;
+}
+
+/* Scrollbar عام (كروم/إيدج/سفاري) */
+.thin-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.thin-scrollbar::-webkit-scrollbar-track {
+  background: var(--bg-deep-2);
+}
+.thin-scrollbar::-webkit-scrollbar-thumb {
+  background: #3b7a80;
+  border-radius: 9999px;
+}
+.thin-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #459199;
+}
+/* فايرفوكس */
+.thin-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #3b7a80 var(--bg-deep-2);
+}
