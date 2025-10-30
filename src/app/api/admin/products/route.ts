@@ -1,7 +1,11 @@
 ﻿// src/app/api/admin/products/route.ts
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import createServerSupabase from "@/lib/supabase/server";
+import { createServiceRoleSupabase } from "@/lib/supabase/server";
 
 /* =========================================
    Helpers
@@ -18,12 +22,11 @@ function slugify(val: string) {
 }
 
 // يضمن تفريد الـSKU بإضافة -01, -02 ... إذا وجدنا تكرارًا
-async function ensureUniqueSku(base: string, supabase: any) {
+async function ensureUniqueSku(base: string, client: any) {
   let sku = base || "SKU";
   let i = 1;
-  // نتحقق على مستوى الجدول كله (عندك قيد فريد على sku)
   while (true) {
-    const { data } = await supabase
+    const { data } = await client
       .from("product_variants")
       .select("id")
       .eq("sku", sku)
@@ -78,7 +81,7 @@ const OptionSchema = z.object({
 });
 
 const SkuSchema = z.object({
-  sku: z.string().min(1).optional(), // لو ما أرسلت → سنولده من الخيارات/الاسم
+  sku: z.string().min(1).optional(),
   barcode: z.string().optional(),
   mpn: z.string().optional(),
   gtin: z.string().optional(),
@@ -101,29 +104,14 @@ const SkuSchema = z.object({
 const PayloadSchema = z.object({
   name: z.string().min(3),
   description: z.string().optional().default(""),
-  status: z
-    .enum(["active", "hidden", "sale", "out"])
-    .optional()
-    .default("active"),
+  status: z.enum(["active", "hidden", "sale", "out"]).optional().default("active"),
   product_type: z
-    .enum([
-      "product",
-      "group_products",
-      "codes",
-      "digital",
-      "donating",
-      "booking",
-      "service",
-      "food",
-    ])
+    .enum(["product","group_products","codes","digital","donating","booking","service","food"])
     .optional()
     .default("product"),
   require_shipping: z.boolean().optional().default(true),
 
-  channels: z
-    .array(z.enum(["web", "app"]))
-    .optional()
-    .default(["web", "app"]),
+  channels: z.array(z.enum(["web", "app"])).optional().default(["web", "app"]),
   brand: z.object({ name: z.string().min(1) }).optional(),
   tags: z.array(z.string().min(1)).optional().default([]),
   categories: z.array(z.string().uuid()).optional().default([]),
@@ -135,18 +123,22 @@ const PayloadSchema = z.object({
 });
 
 /* =========================================
-   POST /api/admin/products
+   POST /api/admin/products  — (CREATE) يستخدم Service-Role للكتابة
    ========================================= */
 
 export async function POST(req: NextRequest) {
   try {
+    // قراءة/استعلامات بسيطة: نقدر نستخدم عميلك الحالي
     const supabase = await createServerSupabase();
+    // الكتابة المحمية (RLS): استخدم Service-Role
+    const admin = createServiceRoleSupabase();
+
     const body = await req.json();
     const payload = PayloadSchema.parse(body);
     const warnings: string[] = [];
 
     /* 1) إنشاء المنتج */
-    const { data: prodIns, error: prodErr } = await supabase
+    const { data: prodIns, error: prodErr } = await admin
       .from("products")
       .insert({
         name: payload.name,
@@ -174,27 +166,30 @@ export async function POST(req: NextRequest) {
         .maybeSingle();
       let brandId = found?.id as string | undefined;
       if (!brandId) {
-        const { data: insBrand } = await supabase
+        const { data: insBrand, error: brandErr } = await admin
           .from("brands")
           .insert({ name: payload.brand.name })
           .select("id")
           .single();
+        if (brandErr) return NextResponse.json({ error: brandErr.message }, { status: 400 });
         brandId = insBrand?.id as string | undefined;
       }
       if (brandId) {
-        await supabase
+        const { error } = await admin
           .from("products")
           .update({ brand_id: brandId })
           .eq("id", productId);
+        if (error) return NextResponse.json({ error: error.message }, { status: 400 });
       }
     }
 
     /* 3) القنوات */
     if (payload.channels.length) {
-      await supabase.from("product_channels").upsert(
+      const { error } = await admin.from("product_channels").upsert(
         payload.channels.map((ch) => ({ product_id: productId, channel: ch })),
         { onConflict: "product_id,channel" }
       );
+      if (error) return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
     /* 4) الوسوم */
@@ -212,31 +207,35 @@ export async function POST(req: NextRequest) {
         .map((name) => ({ name }));
       let inserted: { id: string; name: string }[] = [];
       if (toInsert.length) {
-        const { data: ins } = await supabase
+        const { data: ins, error } = await admin
           .from("tags")
           .insert(toInsert)
           .select("id,name");
+        if (error) return NextResponse.json({ error: error.message }, { status: 400 });
         inserted = ins ?? [];
       }
       const allPairs = [...(existing ?? []), ...inserted].map((t) => ({
         product_id: productId,
         tag_id: t.id,
       }));
-      if (allPairs.length)
-        await supabase
+      if (allPairs.length) {
+        const { error } = await admin
           .from("product_tags")
           .upsert(allPairs, { onConflict: "product_id,tag_id" });
+        if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+      }
     }
 
     /* 5) التصنيفات (اختياري) */
     if (payload.categories.length) {
-      await supabase.from("product_taxons").upsert(
+      const { error } = await admin.from("product_taxons").upsert(
         payload.categories.map((taxonId) => ({
           product_id: productId,
           taxon_id: taxonId,
         })),
         { onConflict: "product_id,taxon_id" }
       );
+      if (error) return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
     /* 6) الصور */
@@ -251,11 +250,8 @@ export async function POST(req: NextRequest) {
         video_url: img.video_url ?? null,
         three_d_image_url: img.three_d_image_url ?? null,
       }));
-      const { error: imgErr } = await supabase
-        .from("product_images")
-        .insert(rows);
-      if (imgErr)
-        return NextResponse.json({ error: imgErr.message }, { status: 400 });
+      const { error: imgErr } = await admin.from("product_images").insert(rows);
+      if (imgErr) return NextResponse.json({ error: imgErr.message }, { status: 400 });
     }
 
     /* 7) خيارات + قيم (إن وُجدت) */
@@ -269,7 +265,7 @@ export async function POST(req: NextRequest) {
 
     if (payload.options.length) {
       // إدراج الخيارات
-      const { data: insOpts, error: optErr } = await supabase
+      const { data: insOpts, error: optErr } = await admin
         .from("product_options")
         .insert(
           payload.options.map((o, idx) => ({
@@ -305,7 +301,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const { data: insVals, error: valErr } = await supabase
+      const { data: insVals, error: valErr } = await admin
         .from("product_option_values")
         .insert(valuesRows)
         .select("id, option_id, name");
@@ -316,10 +312,7 @@ export async function POST(req: NextRequest) {
       const optNameById = new Map<string, string>();
       insOpts?.forEach((o) => optNameById.set(o.id, o.name));
 
-      const valueMapByOptName = new Map<
-        string,
-        { id: string; name: string }[]
-      >();
+      const valueMapByOptName = new Map<string, { id: string; name: string }[]>();
       payload.options.forEach((o) => valueMapByOptName.set(o.name, []));
       insVals?.forEach((v) => {
         const optName = optNameById.get(v.option_id)!;
@@ -329,14 +322,11 @@ export async function POST(req: NextRequest) {
       // توليد التركيبات
       const arrays = payload.options.map((o) => valueMapByOptName.get(o.name)!);
       const combos = cartesian(arrays); // [[{id,name},{id,name}], ...]
-
       generatedSkus = combos.map((combo) => {
         const namesMap: Record<string, string> = {};
         payload.options.forEach((o, i) => (namesMap[o.name] = combo[i].name));
         const base = slugify(
-          payload.name +
-            "-" +
-            payload.options.map((o, i) => combo[i].name).join("-")
+          payload.name + "-" + payload.options.map((o, i) => combo[i].name).join("-")
         );
         return {
           skuBase: base || "SKU",
@@ -356,21 +346,13 @@ export async function POST(req: NextRequest) {
         .maybeSingle();
       defaultBranchId = branch?.id ?? null;
       if (!defaultBranchId)
-        warnings.push(
-          "No branches found. Variants will be created without inventory rows."
-        );
+        warnings.push("No branches found. Variants will be created without inventory rows.");
     }
 
-    /* 9) إنشاء SKUs:
-          - إذا أُرسلت skus[] نستخدمها.
-          - وإلا نولّد من الخيارات. */
+    /* 9) إنشاء SKUs */
     const skusInput =
       payload.skus.length > 0
-        ? payload.skus.map((s) => ({
-            ...s,
-            __optionValueIds: [] as string[],
-            __namesMap: {} as Record<string, string>,
-          }))
+        ? payload.skus.map((s) => ({ ...s, __optionValueIds: [] as string[], __namesMap: {} as Record<string, string> }))
         : generatedSkus.map((g) => ({
             sku: g.skuBase,
             price: 0,
@@ -387,15 +369,14 @@ export async function POST(req: NextRequest) {
         s.sku && s.sku.trim().length
           ? slugify(s.sku)
           : slugify(
-              payload.name + "-" + (s as any).__namesMap &&
-                Object.values((s as any).__namesMap).length
+              payload.name + "-" + ((s as any).__namesMap && Object.values((s as any).__namesMap).length
                 ? Object.values((s as any).__namesMap).join("-")
-                : "SKU"
+                : "SKU")
             );
-      const finalSku = await ensureUniqueSku(baseSku, supabase);
+      const finalSku = await ensureUniqueSku(baseSku, admin);
 
       // 9.1 variant
-      const { data: variant, error: vErr } = await supabase
+      const { data: variant, error: vErr } = await admin
         .from("product_variants")
         .insert({
           product_id: productId,
@@ -427,30 +408,22 @@ export async function POST(req: NextRequest) {
         price_type: "retail",
         starts_at: new Date().toISOString(),
       };
-      if ((s as any).sale_price != null)
-        priceRow.sale_price = (s as any).sale_price;
+      if ((s as any).sale_price != null) priceRow.sale_price = (s as any).sale_price;
       if ((s as any).sale_end) priceRow.ends_at = (s as any).sale_end;
-      const { error: pErr } = await supabase
-        .from("variant_prices")
-        .insert(priceRow);
-      if (pErr)
-        return NextResponse.json({ error: pErr.message }, { status: 400 });
+
+      const { error: pErr } = await admin.from("variant_prices").insert(priceRow);
+      if (pErr) return NextResponse.json({ error: pErr.message }, { status: 400 });
 
       // 9.3 inventory
       if (defaultBranchId) {
         const invRow = {
           variant_id: variantId,
           branch_id: defaultBranchId,
-          qty_on_hand: (s as any).unlimited_quantity
-            ? 0
-            : (s as any).qty_on_hand ?? 0,
+          qty_on_hand: (s as any).unlimited_quantity ? 0 : (s as any).qty_on_hand ?? 0,
           qty_reserved: 0,
         };
-        const { error: iErr } = await supabase
-          .from("variant_inventory")
-          .insert(invRow);
-        if (iErr)
-          return NextResponse.json({ error: iErr.message }, { status: 400 });
+        const { error: iErr } = await admin.from("variant_inventory").insert(invRow);
+        if (iErr) return NextResponse.json({ error: iErr.message }, { status: 400 });
       }
 
       // 9.4 ربط قيم الخيارات
@@ -464,18 +437,14 @@ export async function POST(req: NextRequest) {
         optionValueIds = rows?.map((r) => r.id) ?? [];
       }
       if (optionValueIds.length) {
-        await supabase
+        const { error } = await admin
           .from("variant_option_values")
-          .insert(
-            optionValueIds.map((id) => ({
-              variant_id: variantId,
-              option_value_id: id,
-            }))
-          );
+          .insert(optionValueIds.map((id) => ({ variant_id: variantId, option_value_id: id })));
+        if (error) return NextResponse.json({ error: error.message }, { status: 400 });
       }
     }
 
-    /* 10) إرجاع المنتج مع علاقات أساسية */
+    /* 10) إرجاع المنتج مع علاقات أساسية (قراءة عبر anon) */
     const { data: full } = await supabase
       .from("products")
       .select(
@@ -491,17 +460,10 @@ export async function POST(req: NextRequest) {
       .single();
 
     return NextResponse.json(
-      {
-        success: true,
-        data: full,
-        warnings: warnings.length ? warnings : undefined,
-      },
+      { success: true, data: full, warnings: warnings.length ? warnings : undefined },
       { status: 201 }
     );
   } catch (err: any) {
-    return NextResponse.json(
-      { error: err?.message || "Unexpected error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: err?.message || "Unexpected error" }, { status: 500 });
   }
 }
