@@ -1,7 +1,16 @@
 // src/app/api/admin/taxons/tree/route.ts
 import { NextResponse } from "next/server";
- 
-import { createServerSupabase } from "@/lib/supabase/server";
+import { createClient as createSb } from "@supabase/supabase-js";
+
+function createServiceClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+  if (!url || !serviceKey) throw new Error("Missing SUPABASE service env");
+  return createSb(url, serviceKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
 type TaxonRow = {
   id: string;
   parent_id: string | null;
@@ -14,65 +23,78 @@ type TaxonRow = {
   archived_at: string | null;
 };
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function GET() {
-  const supa = await createServerSupabase();
+  try {
+    const supa = createServiceClient();
 
-  const { data, error } = await supa
-    .from("taxons")
-    .select(
-      "id,parent_id,level,name,sort_order,status,hide_products,image,archived_at"
-    )
-    .order("sort_order", { ascending: true });
+    const { data, error } = await supa
+      .from("taxons")
+      .select("id,parent_id,level,name,sort_order,status,hide_products,image,archived_at")
+      .order("sort_order", { ascending: true });
 
-  if (error) return new NextResponse(error.message, { status: 500 });
+    if (error) {
+      return new NextResponse(error.message, { status: 500, headers: { "Cache-Control": "no-store" } });
+    }
 
-  const rows = (data ?? []).filter((r) => !r.archived_at) as TaxonRow[];
+    const rows = (data ?? []).filter((r) => !r.archived_at) as TaxonRow[];
 
-  const byParent: Record<string, TaxonRow[]> = {};
-  for (const t of rows) {
-    const key = t.parent_id ?? "root";
-    (byParent[key] ??= []).push(t);
+    const byParent: Record<string, TaxonRow[]> = {};
+    for (const t of rows) {
+      const key = t.parent_id ?? "root";
+      (byParent[key] ??= []).push(t);
+    }
+
+    const mapSegs = (parentId: string) =>
+      (byParent[parentId] ?? [])
+        .filter((t) => t.level === "seg")
+        .map((g) => ({
+          id: g.id,
+          name: g.name,
+          sort_order: g.sort_order,
+          level: g.level,
+          status: g.status,
+          hide_products: !!g.hide_products,
+          image: g.image,
+        }));
+
+    const mapSubs = (parentId: string) =>
+      (byParent[parentId] ?? [])
+        .filter((t) => t.level === "sub")
+        .map((s) => ({
+          id: s.id,
+          name: s.name,
+          sort_order: s.sort_order,
+          level: s.level,
+          status: s.status,
+          hide_products: !!s.hide_products,
+          image: s.image,
+          children: mapSegs(s.id),
+        }));
+
+    const roots = (byParent["root"] ?? [])
+      .filter((t) => t.level === "root")
+      .map((r) => ({
+        id: r.id,
+        name: r.name,
+        sort_order: r.sort_order,
+        level: r.level,
+        status: r.status,
+        hide_products: !!r.hide_products,
+        image: r.image,
+        children: mapSubs(r.id),
+      }));
+
+    return new NextResponse(JSON.stringify(roots), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
+  } catch (e) {
+    return new NextResponse(e instanceof Error ? e.message : "Tree fetch failed", {
+      status: 500,
+      headers: { "Cache-Control": "no-store" },
+    });
   }
-
-  const mapSegs = (parentId: string) =>
-    (byParent[parentId] ?? [])
-      .filter((t) => t.level === "seg")
-      .map((g) => ({
-        id: g.id,
-        name: g.name,
-        sort_order: g.sort_order,
-        level: g.level,
-        status: g.status,
-        hide_products: !!g.hide_products,
-        image: g.image,
-      }));
-
-  const mapSubs = (parentId: string) =>
-    (byParent[parentId] ?? [])
-      .filter((t) => t.level === "sub")
-      .map((s) => ({
-        id: s.id,
-        name: s.name,
-        sort_order: s.sort_order,
-        level: s.level,
-        status: s.status,
-        hide_products: !!s.hide_products,
-        image: s.image,
-        children: mapSegs(s.id),
-      }));
-
-  const roots = (byParent["root"] ?? [])
-    .filter((t) => t.level === "root")
-    .map((r) => ({
-      id: r.id,
-      name: r.name,
-      sort_order: r.sort_order,
-      level: r.level,
-      status: r.status,
-      hide_products: !!r.hide_products,
-      image: r.image,
-      children: mapSubs(r.id),
-    }));
-
-  return NextResponse.json(roots);
 }
