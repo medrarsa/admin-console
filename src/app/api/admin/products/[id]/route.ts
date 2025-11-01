@@ -16,14 +16,12 @@ type Body = {
   name?: string;
   tags?: string[];
   brand?: string | null;
-
   sku?: string | null;
   costPrice?: number | null;
   price?: number | null;
   salePrice?: number | null;
   discountEnd?: string | null;
   qty?: number | null;
-
   shortTitle?: string | null;
   years?: string | null;
   descriptionHtml?: string | null;
@@ -168,20 +166,17 @@ async function buildProductDetails(db: any, product_id: string) {
     name: p.name,
     type: p.product_type ?? "product",
     status: p.status ?? "active",
-
     price: { amount: mainPrice?.price ?? 0, currency: mainPrice?.currency ?? "SAR" },
     sale_price: { amount: mainPrice?.sale_price ?? 0, currency: mainPrice?.currency ?? "SAR" },
     sale_end: mainPrice?.ends_at ?? null,
     main_cost_price: mainCost,
     quantity,
-
     short_title: p.short_title ?? null,
     years: p.years ?? null,
     description_html: p.description_html ?? null,
     seo_title_tpl: p.seo_title_tpl ?? null,
     seo_slug_tpl: p.seo_slug_tpl ?? null,
     seo_desc_tpl: p.seo_desc_tpl ?? null,
-
     brand,
     channels,
     tags,
@@ -196,7 +191,6 @@ async function buildProductDetails(db: any, product_id: string) {
         video_url: im.video_url ?? null,
         three_d_image_url: im.three_d_image_url ?? null,
       })) ?? [],
-
     skus: (variants || []).map((v: any) => {
       const vp = priceMap.get(v.id) as PriceRow | undefined;
       const iv = invMap.get(v.id) as InvRow | undefined;
@@ -372,5 +366,62 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     return ok(data, 200);
   } catch (err: any) {
     return fail(err?.message || "تعذّر تحديث المنتج", 400);
+  }
+}
+
+/* ========= DELETE ========= */
+export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  try {
+    const supabase = await createServerSupabase();      // قراءة/تحقق
+    const admin = createServiceRoleSupabase();          // كتابة محمية بـ RLS
+    const { id } = await ctx.params;
+    const product_id = id;
+
+    // تأكيد الوجود
+    const { data: exists, error: e0 } = await supabase
+      .from("products").select("id").eq("id", product_id).maybeSingle();
+    if (e0) return fail(e0.message, 400, { where: "exists/products" });
+    if (!exists?.id) return fail("المنتج غير موجود", 404);
+
+    // 1) صور
+    await admin.from("product_images").delete().eq("product_id", product_id);
+
+    // 2) وسوم وتصنيفات
+    await admin.from("product_tags").delete().eq("product_id", product_id);
+    await admin.from("product_taxons").delete().eq("product_id", product_id);
+
+    // 3) خيارات وقيمها + ربطها مع الفاريِنتات
+    const { data: opts } = await supabase
+      .from("product_options").select("id").eq("product_id", product_id);
+    if (opts?.length) {
+      const optIds = opts.map(o => o.id);
+      const { data: vals } = await supabase
+        .from("product_option_values").select("id").in("option_id", optIds);
+      if (vals?.length) {
+        const valIds = vals.map(v => v.id);
+        await admin.from("variant_option_values").delete().in("option_value_id", valIds);
+        await admin.from("product_option_values").delete().in("id", valIds);
+      }
+      await admin.from("product_options").delete().in("id", optIds);
+    }
+
+    // 4) الفاريِنتات وأسعارها ومخزونها
+    const { data: vars } = await supabase
+      .from("product_variants").select("id").eq("product_id", product_id);
+    if (vars?.length) {
+      const vIds = vars.map(v => v.id);
+      await admin.from("variant_inventory").delete().in("variant_id", vIds);
+      await admin.from("variant_prices").delete().in("variant_id", vIds);
+      await admin.from("variant_option_values").delete().in("variant_id", vIds);
+      await admin.from("product_variants").delete().in("id", vIds);
+    }
+
+    // 5) أخيرًا: المنتج
+    const { error: delErr } = await admin.from("products").delete().eq("id", product_id);
+    if (delErr) return fail(delErr.message, 400, { where: "delete/products" });
+
+    return ok({ id: product_id }, 200);
+  } catch (err: any) {
+    return fail(err?.message || "تعذّر حذف المنتج", 400);
   }
 }

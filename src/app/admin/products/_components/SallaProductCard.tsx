@@ -1,3 +1,4 @@
+// src/app/admin/products/_components/SallaProductCard.tsx
 "use client";
 
 import * as React from "react";
@@ -21,7 +22,7 @@ function cx(...parts: Array<string | false | undefined>) {
 type Props = {
   p: Product;
   onChange: (patch: Partial<Product>) => void;
-  onDelete: () => void;
+  onDelete: () => void;             // سيُستدعى بعد نجاح الحذف لتحديث القائمة في الأب
   onOpenEdit: () => void;
   onOpenOptions: () => void;
   onOpenImages: () => void;
@@ -42,10 +43,12 @@ export default function SallaProductCard({
   const [price, setPrice] = React.useState<number | undefined>(p.price);
   const [qty, setQty] = React.useState<number | undefined>(p.qty);
   const [tags, setTags] = React.useState<string[]>(p.tags ?? []);
-  const [localCat, setLocalCat] = React.useState<string | null>(
-    p.localCategory ?? null
-  );
+  const [localCat, setLocalCat] = React.useState<string | null>(p.localCategory ?? null);
   const [saving, setSaving] = React.useState(false);
+
+  // حوار تأكيد الحذف
+  const [confirmOpen, setConfirmOpen] = React.useState(false);
+  const [deleting, setDeleting] = React.useState(false);
 
   // ادفع التغييرات للأب (بدون تغيير المنطق)
   React.useEffect(() => {
@@ -59,6 +62,22 @@ export default function SallaProductCard({
       await onSaveCard();
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleConfirmDelete() {
+    try {
+      setDeleting(true);
+      const res = await fetch(`/api/admin/products/${p.id}`, { method: "DELETE" });
+      const json = await res.json();
+      if (!res.ok || !json?.success) {
+        alert(`فشل الحذف: ${json?.error || res.statusText}`);
+        return;
+      }
+      setConfirmOpen(false);
+      onDelete(); // أخبر الأب ليشيل البطاقة من القائمة
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -238,8 +257,6 @@ export default function SallaProductCard({
             onChange={(e) => {
               const v = e.currentTarget.value;
               setLocalCat(v || null);
-              // الخبر للأب يبقى كما هو (معطّل حسب تعليقك)
-              // onChange({ localCategory: v || null });
             }}
           >
             <option value="">اختر تصنيف محلي</option>
@@ -268,7 +285,7 @@ export default function SallaProductCard({
       <div className="flex items-center justify-between">
         <button
           type="button"
-          onClick={onDelete}
+          onClick={() => setConfirmOpen(true)}
           className="inline-flex items-center gap-2 rounded-2xl border border-rose-200/70 bg-white/80 px-3 py-2 text-[13px] text-rose-700 shadow-sm transition hover:bg-rose-50/80"
         >
           حذف
@@ -297,6 +314,35 @@ export default function SallaProductCard({
           </button>
         </div>
       </div>
+
+      {/* Confirm Delete Modal */}
+      {confirmOpen && (
+        <div className="fixed inset-0 z-[100] grid place-items-center bg-black/40">
+          <div className="w-[90%] max-w-md rounded-2xl bg-white p-5 shadow-xl" dir="rtl">
+            <h3 className="mb-2 text-lg font-bold">تأكيد الحذف</h3>
+            <p className="text-sm text-zinc-600">
+              هل أنت متأكد من حذف المنتج:{" "}
+              <span className="font-semibold text-rose-600">{p.name}</span>؟ هذا الإجراء لا يمكن التراجع عنه.
+            </p>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                onClick={() => setConfirmOpen(false)}
+                disabled={deleting}
+                className="rounded-xl border px-4 py-2"
+              >
+                إلغاء
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                disabled={deleting}
+                className="rounded-xl bg-rose-600 px-4 py-2 font-semibold text-white"
+              >
+                {deleting ? "جارِ الحذف..." : "نعم، احذف"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
