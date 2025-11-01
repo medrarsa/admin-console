@@ -16,39 +16,47 @@ export async function POST(req: NextRequest) {
   try {
     const form = await req.formData();
     const file = form.get("file") as File | null;
-    const keyPrefixRaw = String(form.get("keyPrefix") || "brand");
+    const brandSlugRaw = String(form.get("keyPrefix") || "brand"); // ex: "puma"
     const kind = (String(form.get("kind") || "file") as "logo" | "banner" | "file");
 
-    if (!file) return NextResponse.json({ message: "file is required" }, { status: 400 });
+    if (!file) {
+      return NextResponse.json({ message: "file is required" }, { status: 400 });
+    }
 
-    const admin = createServiceRoleSupabase(); // نستخدم Service-Role للرفع
-    const keyPrefix = sanitize(keyPrefixRaw) || "brand";
+    // Service-Role client (RLS-safe for server-side uploads)
+    const admin = createServiceRoleSupabase();
+
+    // ✅ bucket name as it appears in Supabase
+    const BUCKET = "brands";
+
+    // Folder = <slug>  (don't repeat the bucket name inside the path)
+    const brandSlug = sanitize(brandSlugRaw) || "brand";
     const ext = extOf(file.name);
     const fname = `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-    const objectPath = `brands/${keyPrefix}/${fname}`;
+    const objectPath = `${brandSlug}/${fname}`; // e.g. puma/logo-*.png
 
-    // حوّل File إلى ArrayBuffer → Buffer
-    const ab = await file.arrayBuffer();
-    const buf = Buffer.from(ab);
-
-    // ارفع إلى باكت عام
+    const buf = Buffer.from(await file.arrayBuffer());
     const { error: upErr } = await admin.storage
-      .from("brand-assets")
+      .from(BUCKET)
       .upload(objectPath, buf, {
         upsert: true,
         contentType: file.type || "application/octet-stream",
       });
 
     if (upErr) {
-      return NextResponse.json({ message: "upload failed", error: upErr.message }, { status: 500 });
+      return NextResponse.json(
+        { message: "upload failed", error: upErr.message },
+        { status: 500 }
+      );
     }
 
-    // استخرج الرابط العام
-    const { data: pub } = admin.storage.from("brand-assets").getPublicUrl(objectPath);
-    const publicUrl = pub.publicUrl; // رابط مباشر صالح للعرض
-
-    return NextResponse.json({ ok: true, url: publicUrl });
+    // Public URL (Supabase CDN)
+    const { data: pub } = admin.storage.from(BUCKET).getPublicUrl(objectPath);
+    return NextResponse.json({ ok: true, url: pub.publicUrl });
   } catch (e: any) {
-    return NextResponse.json({ message: e?.message || "unexpected error" }, { status: 500 });
+    return NextResponse.json(
+      { message: e?.message || "unexpected error" },
+      { status: 500 }
+    );
   }
 }
