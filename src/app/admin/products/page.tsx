@@ -1,5 +1,5 @@
 ﻿// src/app/admin/products/page.tsx
-import createServerSupabase from "@/lib/supabase/server";
+import createServerSupabase, { createServiceRoleSupabase } from "@/lib/supabase/server";
 import ProductsClient from "./ProductsClient";
 
 /* منع الكاش لصفحة الأدمن */
@@ -29,7 +29,8 @@ type DBPrice = {
 type DBInv = { variant_id: string; qty_on_hand: number | null };
 
 export default async function AdminProductsListPage() {
-  const supabase = await createServerSupabase();
+  const supabase = await createServerSupabase();             // عميل الجلسة
+  const adminRead = createServiceRoleSupabase();             // قراءة مضمونة (لتجاوز RLS في الصور فقط)
 
   // 1) المنتجات
   const { data: productsRaw, error: e1 } = await supabase
@@ -69,8 +70,8 @@ export default async function AdminProductsListPage() {
 
   const ids = products.map((p) => p.id);
 
-  // 2) الصور — نجلب sort_order أيضًا
-  const { data: imgsRaw } = await supabase
+  // 2) الصور — نقرأ عبر Service-Role ونأتي بـ sort_order
+  const { data: imgsRaw } = await adminRead
     .from("product_images")
     .select("product_id,url,is_primary,sort_order")
     .in("product_id", ids);
@@ -155,7 +156,7 @@ export default async function AdminProductsListPage() {
       id: p.id,
       name: p.name,
       status: p.status,
-      imageUrl: pickImage(p.id), // 👈 الأساس/الأول بالترتيب
+      imageUrl: pickImage(p.id), // 👈 ستظهر على البطاقة بعد الريفرش
       price: pr.price,
       salePrice: pr.sale ?? undefined,
       qty,
