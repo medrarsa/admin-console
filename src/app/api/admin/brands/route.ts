@@ -3,14 +3,17 @@ import { NextRequest, NextResponse } from "next/server";
 import createClient, { createServiceRoleSupabase } from "@/lib/supabase/server";
 import { z } from "zod";
 
-/* سماح أثناء التطوير لتسهيل الاختبار */
+/* سماح أثناء التطوير لتسهيل الاختبار (نستعمله فقط للكتابة) */
 function assertAdmin(req: NextRequest) {
   const role = req.headers.get("x-app-role") ?? "";
   if (process.env.NODE_ENV !== "production") {
     if (role === "admin" || role === "") return null;
   }
   if (role !== "admin") {
-    return NextResponse.json({ message: "Forbidden (missing x-app-role=admin)" }, { status: 403 });
+    return NextResponse.json(
+      { message: "Forbidden (missing x-app-role=admin)" },
+      { status: 403 }
+    );
   }
   return null;
 }
@@ -19,10 +22,16 @@ function assertAdmin(req: NextRequest) {
 const UrlOrPath = z
   .string()
   .refine(
-    (v) => v === undefined || v === null || v === "" || v.startsWith("http") || v.startsWith("/"),
+    (v) =>
+      v === undefined ||
+      v === null ||
+      v === "" ||
+      v.startsWith("http") ||
+      v.startsWith("/"),
     "Invalid URL"
   );
 
+/* لو slug فاضي نتجاهل كامل كائن الـSEO */
 const SeoSchema = z.object({
   slug: z.string().min(1),
   meta_title: z.string().optional(),
@@ -45,12 +54,12 @@ const CreateBrandSchema = z.object({
   }, SeoSchema).optional(),
 });
 
-/** GET /api/admin/brands */
+/* =========================================
+   GET  — قراءة الماركات (بدون الاعتماد على x-app-role)
+   ========================================= */
 export async function GET(req: NextRequest) {
-  const guard = assertAdmin(req);
-  if (guard) return guard;
-
-  const supabase = await createClient();
+  // نستخدم Service-Role للقراءة لضمان عدم سقوط الهيدر
+  const supabase = createServiceRoleSupabase();
 
   const { searchParams } = new URL(req.url);
   const q = (searchParams.get("q") ?? "").trim();
@@ -69,7 +78,9 @@ export async function GET(req: NextRequest) {
   query = query.order("name", { ascending: true }).range(from, to);
 
   const { data: brands, error, count } = await query;
-  if (error) return NextResponse.json({ message: "DB error (brands)", error }, { status: 500 });
+  if (error) {
+    return NextResponse.json({ message: "DB error (brands)", error }, { status: 500 });
+  }
 
   // SEO المرتبط
   let seoByBrandId: Record<string, any> = {};
@@ -88,13 +99,16 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ data, page, per, total: count ?? data.length });
 }
 
-/** POST /api/admin/brands */
+/* =========================================
+   POST — إنشاء/تحديث ماركة (يتطلب admin ويكتب بـ Service-Role)
+   ========================================= */
 export async function POST(req: NextRequest) {
+  // نحافظ على التحقق للكتابة فقط
   const guard = assertAdmin(req);
   if (guard) return guard;
 
-  const supabase = await createClient();                // للقراءة
-  const admin = createServiceRoleSupabase();            // للكتابة (RLS)
+  const supabase = await createClient();               // للقراءات الجانبية لو احتجنا
+  const admin = createServiceRoleSupabase();           // للكتابة (RLS)
 
   const body = await req.json();
   const parsed = CreateBrandSchema.safeParse(body);
@@ -103,7 +117,7 @@ export async function POST(req: NextRequest) {
       { message: "Validation failed", errors: parsed.error.flatten() },
       { status: 422 }
     );
-  }
+    }
   const payload = parsed.data;
 
   // إنشاء/تحديث الماركة بالاسم (onConflict=name)
