@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import createServerSupabase, { createServiceRoleSupabase } from "@/lib/supabase/server";
 
-const BUCKET = "products"; // تأكد أن الباكت موجود ومفعل Public
+const BUCKET = "products"; // تأكد أن البكت موجود ومفعل Public
 
 function extOf(name: string) {
   const e = (name.split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -38,7 +38,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
   }
 }
 
-/** POST: رفع صور متعددة وتعيين أول صورة أساسية إن لم توجد أساسية */
+/** POST: رفع صور متعددة. ندخلها كلها is_primary=false ثم نعين واحدة أساسية إن لم توجد أساسًا. */
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
     const { id: product_id } = await ctx.params;
@@ -55,20 +55,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     const alts = form.getAll("alts").map((v) => String(v));
     if (!files?.length) return fail("no files[] provided", 400);
 
-    // تحقّق آمن من وجود أساسية حالياً
-    let hasPrimary = false;
-    {
-      const { data: curP, error: eP } = await supa
-        .from("product_images")
-        .select("id")
-        .eq("product_id", product_id)
-        .eq("is_primary", true)
-        .limit(1)
-        .maybeSingle();
-      hasPrimary = !!(curP && curP.id && !eP);
-    }
-
-    // آخر sort_order
+    // آخر ترتيب حالي
     const { data: curMax } = await supa
       .from("product_images")
       .select("sort_order")
@@ -78,6 +65,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       .maybeSingle();
     let order = (curMax?.sort_order ?? -1) + 1;
 
+    // نرفع ونجهز صفوف الإدراج (كلها is_primary=false)
     const rows: any[] = [];
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
@@ -97,8 +85,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         product_id,
         url: pub.publicUrl,
         alt: alts[i] ? alts[i] : null,
-        // ✅ عيّن الأساسية فقط إذا تأكدنا عدم وجود أساسية مسبقًا
-        is_primary: !hasPrimary && i === 0,
+        is_primary: false,       // ⛳️ لا نعيّن الأساسية أثناء الإدراج
         sort_order: order++,
         type: "image",
         video_url: null,
@@ -106,12 +93,32 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       });
     }
 
-    // الإدراج
+    // إدراج الصفوف
     const { data: inserted, error: insErr } = await admin
       .from("product_images")
       .insert(rows)
       .select("id,url,alt,is_primary,sort_order,type");
     if (insErr) return fail(insErr.message, 500, { where: "insert/product_images" });
+
+    // بعد الإدراج: إن لم توجد أساسية، حاول تعيين أول صورة الآن كأساسية
+    let hasPrimary = false;
+    {
+      const { data: curP } = await supa
+        .from("product_images")
+        .select("id")
+        .eq("product_id", product_id)
+        .eq("is_primary", true)
+        .limit(1)
+        .maybeSingle();
+      hasPrimary = !!curP?.id;
+    }
+
+    if (!hasPrimary && inserted && inserted.length) {
+      // جرّب تعيين أول صورة من المدخلات كأساسية.
+      // إن سبق مسار آخر وعيّن أساسية، هذا التحديث لن يسبب duplicate لأننا لا ندخل صفًا جديدًا.
+      const firstId = inserted[0].id as string;
+      await admin.from("product_images").update({ is_primary: true }).eq("id", firstId);
+    }
 
     return ok(inserted, 201);
   } catch (e: any) {
@@ -128,6 +135,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     const body = (await req.json()) as { primaryId?: string; order?: string[] };
 
     if (body.primaryId) {
+      // امسح الأساسية الحالية ثم عيّن الجديدة—في عمليتين منفصلتين لتقليل احتمالات تضارب القيد
       await admin.from("product_images").update({ is_primary: false }).eq("product_id", product_id);
       await admin.from("product_images").update({ is_primary: true }).eq("id", body.primaryId);
     }
