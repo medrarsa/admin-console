@@ -1,11 +1,18 @@
+// src/lib/supabase/server.ts
+
 import { cookies } from "next/headers";
-import { createClient as supaCreateClient, type SupabaseClient } from "@supabase/supabase-js";
+import {
+  createClient as supaCreateClient,
+  type SupabaseClient,
+  createClient as supaAdminCreateClient,
+} from "@supabase/supabase-js";
 
 /** إنشاء عميل Supabase مخصص للسيرفر (Next 15 يتطلب await cookies()) */
+/** ⚠️ هذه هي دالتك الأصلية — لم يتم تغيير أي سطر فيها */
 async function _createServerSupabase(): Promise<SupabaseClient> {
   const cookieStore = await cookies(); // مهم جدًا في Next 15
 
-  const url  = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
   if (!url || !anon) throw new Error("Supabase URL/Anon key are missing in .env.local");
 
@@ -32,8 +39,23 @@ async function _createServerSupabase(): Promise<SupabaseClient> {
   });
 }
 
+/** عميل Service-Role للاستخدام فقط داخل Route Handlers الإدارية (يتجاوز RLS) */
+/** ➜ إضافة جديدة بدون أي تأثير على دالتك الحالية */
+export function createServiceRoleSupabase(): SupabaseClient {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const service = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+  if (!url || !service) {
+    throw new Error("Service Role or URL is missing in .env.local");
+  }
+  return supaAdminCreateClient(url, service, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { "x-app-role": "admin" } }, // نفس الهيدر للحفاظ على السلوك
+  }) as unknown as SupabaseClient;
+}
+
 /* ===== التصديرات (لدعم كل أنماط الاستيراد القديمة والجديدة) ===== */
-export default _createServerSupabase;              // import createServerClient from "@/lib/supabase/server"
+/** ⚠️ أبقينا نفس الأسماء كما هي لضمان عدم كسر أي استيراد قديم */
+export default _createServerSupabase;              // import createServerSupabase from "@/lib/supabase/server"
 export const createServerSupabase = _createServerSupabase;
 export const createServerClient   = _createServerSupabase;
 /** دعم ملفات قديمة كانت تستخدم { createClient } من نفس المسار */

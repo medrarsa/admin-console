@@ -1,14 +1,9 @@
-// GET & PATCH — يقرأ ويحدّث:
-// - الاسم/الوسوم/الماركة/SEO+الوصف (products, brands, product_tags)
-// - سعر التكلفة للـSKU الرئيسي (product_variants.cost_price)
-// - السعر/السعر المخفض/نهاية التخفيض (variant_prices)
-// - الكمية لفرع MAIN افتراضيًا (variant_inventory)
-
+// src/app/api/admin/products/[id]/route.ts
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import createServerSupabase from "@/lib/supabase/server";
+import createServerSupabase, { createServiceRoleSupabase } from "@/lib/supabase/server";
 
 /* ========= Utilities ========= */
 const ok = (data: any, status = 200) =>
@@ -21,16 +16,12 @@ type Body = {
   name?: string;
   tags?: string[];
   brand?: string | null;
-
-  // Variant + Prices (للـSKU الرئيسي)
   sku?: string | null;
-  costPrice?: number | null;      // product_variants.cost_price
-  price?: number | null;          // optional (variant_prices.price)
-  salePrice?: number | null;      // variant_prices.sale_price
-  discountEnd?: string | null;    // variant_prices.ends_at (YYYY-MM-DD)
-  qty?: number | null;            // variant_inventory.qty_on_hand
-
-  // SEO + description (أعمدة موجودة في products)
+  costPrice?: number | null;
+  price?: number | null;
+  salePrice?: number | null;
+  discountEnd?: string | null;
+  qty?: number | null;
   shortTitle?: string | null;
   years?: string | null;
   descriptionHtml?: string | null;
@@ -83,7 +74,6 @@ async function pickBranchId(db: any) {
   return first?.id ?? null;
 }
 
-/* ========= Types for TS (to fix TS7006 etc.) ========= */
 type PriceRow = {
   variant_id: string;
   price: number | null;
@@ -99,9 +89,7 @@ type InvRow = {
   qty_reserved: number | null;
 };
 
-/* ========= GET builder ========= */
 async function buildProductDetails(db: any, product_id: string) {
-  // products
   const { data: p, error: eP } = await db
     .from("products")
     .select(
@@ -112,14 +100,12 @@ async function buildProductDetails(db: any, product_id: string) {
   if (eP) throw eP;
   if (!p) throw new Error("المنتج غير موجود");
 
-  // brand
   let brand: { id: string; name: string } | null = null;
   if (p.brand_id) {
     const { data: b } = await db.from("brands").select("id,name").eq("id", p.brand_id).maybeSingle();
     if (b) brand = { id: b.id, name: b.name };
   }
 
-  // variants (مع cost_price)
   const { data: variants } = await db
     .from("product_variants")
     .select("id,sku,cost_price,unlimited_quantity")
@@ -127,7 +113,6 @@ async function buildProductDetails(db: any, product_id: string) {
 
   const vIds = (variants || []).map((v: any) => v.id);
 
-  /* ===== latest prices per variant (typed) ===== */
   const { data: pricesRaw } = vIds.length
     ? await db
         .from("variant_prices")
@@ -138,15 +123,11 @@ async function buildProductDetails(db: any, product_id: string) {
   const pricesData = (pricesRaw ?? []) as PriceRow[];
   const priceMap = new Map<string, PriceRow>();
   pricesData
-    .sort(
-      (a, b) =>
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    )
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     .forEach((r: PriceRow) => {
       if (!priceMap.has(r.variant_id)) priceMap.set(r.variant_id, r);
     });
 
-  /* ===== inventory (typed) ===== */
   const { data: invRaw } = vIds.length
     ? await db
         .from("variant_inventory")
@@ -165,13 +146,11 @@ async function buildProductDetails(db: any, product_id: string) {
   const mainCost = mainV ? mainV.cost_price ?? null : null;
   const quantity = mainV ? invMap.get(mainV.id)?.qty_on_hand ?? 0 : 0;
 
-  // images (اختياري)
   const { data: imagesRaw } = await db
     .from("product_images")
     .select("id,url,alt,is_primary,sort_order,type,video_url,three_d_image_url")
     .eq("product_id", product_id);
 
-  // channels/tags (اختياري)
   const { data: channelsRaw } = await db.from("product_channels").select("channel").eq("product_id", product_id);
   const channels = (channelsRaw || []).map((c: any) => c.channel);
   const { data: ptRaw } = await db.from("product_tags").select("tag_id").eq("product_id", product_id);
@@ -187,23 +166,17 @@ async function buildProductDetails(db: any, product_id: string) {
     name: p.name,
     type: p.product_type ?? "product",
     status: p.status ?? "active",
-
-    // summary for UI
     price: { amount: mainPrice?.price ?? 0, currency: mainPrice?.currency ?? "SAR" },
     sale_price: { amount: mainPrice?.sale_price ?? 0, currency: mainPrice?.currency ?? "SAR" },
     sale_end: mainPrice?.ends_at ?? null,
-    main_cost_price: mainCost, // 👈 صريح لأوّل SKU
+    main_cost_price: mainCost,
     quantity,
-
-    // seo/desc
     short_title: p.short_title ?? null,
     years: p.years ?? null,
     description_html: p.description_html ?? null,
     seo_title_tpl: p.seo_title_tpl ?? null,
     seo_slug_tpl: p.seo_slug_tpl ?? null,
     seo_desc_tpl: p.seo_desc_tpl ?? null,
-
-    // relations (اختياري)
     brand,
     channels,
     tags,
@@ -218,15 +191,13 @@ async function buildProductDetails(db: any, product_id: string) {
         video_url: im.video_url ?? null,
         three_d_image_url: im.three_d_image_url ?? null,
       })) ?? [],
-
-    // variants list (مع cost_price لكل SKU)
     skus: (variants || []).map((v: any) => {
       const vp = priceMap.get(v.id) as PriceRow | undefined;
       const iv = invMap.get(v.id) as InvRow | undefined;
       return {
         id: v.id,
         sku: v.sku ?? "",
-        cost_price: v.cost_price ?? null, // 👈 نفس اسم العمود
+        cost_price: v.cost_price ?? null,
         stock_quantity: iv?.qty_on_hand ?? 0,
         unlimited_quantity: !!v.unlimited_quantity,
         price: { amount: vp?.price ?? 0, currency: vp?.currency ?? "SAR" },
@@ -255,7 +226,9 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
 /* ========= PATCH ========= */
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
-    const supabase = await createServerSupabase();
+    const supabase = await createServerSupabase();      // قراءة
+    const admin = createServiceRoleSupabase();          // كتابة محمية بـ RLS
+
     const { id } = await ctx.params;
     const product_id = id;
     const body = (await req.json()) as Body;
@@ -264,17 +237,15 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     if (e0) return fail(e0.message, 400, { where: "exists/products" });
     if (!exists?.id) return fail("المنتج غير موجود", 404);
 
-    // 1) products.name (قد يقيّدها RLS)
+    // 1) تحديث الاسم
     if (typeof body.name === "string") {
       const nm = body.name.trim();
       if (nm.length < 3 || nm.length > 200) return fail("اسم المنتج يجب أن يكون بين 3 و 200 حرفًا", 400);
-      const { data: up, error: upErr } = await supabase
-        .from("products").update({ name: nm }).eq("id", product_id).select("id").maybeSingle();
+      const { error: upErr } = await admin.from("products").update({ name: nm }).eq("id", product_id);
       if (upErr) return fail(upErr.message, 400, { where: "update/products/name" });
-      if (!up?.id) return fail("تعذّر تحديث الاسم (RLS)", 403);
     }
 
-    // 2) products: SEO/desc + brand
+    // 2) SEO/desc + brand
     const prodPatch: Record<string, any> = {};
     if (typeof body.shortTitle      !== "undefined") prodPatch.short_title      = body.shortTitle;
     if (typeof body.years           !== "undefined") prodPatch.years            = body.years;
@@ -283,22 +254,22 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     if (typeof body.seoSlugTpl      !== "undefined") prodPatch.seo_slug_tpl     = body.seoSlugTpl;
     if (typeof body.seoDescTpl      !== "undefined") prodPatch.seo_desc_tpl     = body.seoDescTpl;
     if (typeof body.brand !== "undefined") {
-      const brand_id = await upsertBrand(supabase, body.brand);
+      const brand_id = await upsertBrand(admin, body.brand); // admin لأنه INSERT محتمل
       prodPatch.brand_id = brand_id;
     }
     if (Object.keys(prodPatch).length) {
-      const { error: e1 } = await supabase.from("products").update(prodPatch).eq("id", product_id);
+      const { error: e1 } = await admin.from("products").update(prodPatch).eq("id", product_id);
       if (e1) return fail(e1.message, 400, { where: "update/products/seo+extras" });
     }
 
     // 3) tags
     if (Array.isArray(body.tags)) {
-      const tagIds = await ensureTags(supabase, body.tags);
-      const { error: dErr } = await supabase.from("product_tags").delete().eq("product_id", product_id);
+      const tagIds = await ensureTags(admin, body.tags); // INSERT محتمل
+      const { error: dErr } = await admin.from("product_tags").delete().eq("product_id", product_id);
       if (dErr) return fail(dErr.message, 400, { where: "delete/product_tags" });
       if (tagIds.length) {
         const rows = tagIds.map((tag_id) => ({ product_id, tag_id }));
-        const { error: iErr } = await supabase.from("product_tags").insert(rows);
+        const { error: iErr } = await admin.from("product_tags").insert(rows);
         if (iErr) return fail(iErr.message, 400, { where: "insert/product_tags" });
       }
     }
@@ -308,7 +279,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     if (mainVariantId) {
       // cost_price
       if (typeof body.costPrice !== "undefined") {
-        const { error: eCost } = await supabase
+        const { error: eCost } = await admin
           .from("product_variants")
           .update({ cost_price: body.costPrice })
           .eq("id", mainVariantId);
@@ -317,14 +288,14 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
 
       // sku
       if (typeof body.sku !== "undefined") {
-        const { error: eSku } = await supabase
+        const { error: eSku } = await admin
           .from("product_variants")
           .update({ sku: body.sku ?? "" })
           .eq("id", mainVariantId);
         if (eSku) return fail(eSku.message, 400, { where: "update/product_variants/sku" });
       }
 
-      // prices (يعمل حتى بدون price)
+      // prices
       if (
         typeof body.price !== "undefined" ||
         typeof body.salePrice !== "undefined" ||
@@ -344,11 +315,11 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
         if (typeof body.discountEnd !== "undefined") upd.ends_at = body.discountEnd ?? null;
 
         if (latest?.id) {
-          const { error: eP } = await supabase.from("variant_prices").update(upd).eq("id", latest.id);
+          const { error: eP } = await admin.from("variant_prices").update(upd).eq("id", latest.id);
           if (eP) return fail(eP.message, 400, { where: "update/variant_prices" });
         } else {
           const basePrice = typeof upd.price === "number" ? upd.price : 0;
-          const { error: eP2 } = await supabase.from("variant_prices").insert({
+          const { error: eP2 } = await admin.from("variant_prices").insert({
             variant_id: mainVariantId,
             price: basePrice,
             currency: "SAR",
@@ -373,13 +344,13 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
             .maybeSingle();
 
           if (inv?.id) {
-            const { error: eInv } = await supabase
+            const { error: eInv } = await admin
               .from("variant_inventory")
               .update({ qty_on_hand: body.qty ?? 0, updated_at: new Date().toISOString() })
               .eq("id", inv.id);
             if (eInv) return fail(eInv.message, 400, { where: "update/variant_inventory" });
           } else {
-            const { error: eInv2 } = await supabase.from("variant_inventory").insert({
+            const { error: eInv2 } = await admin.from("variant_inventory").insert({
               variant_id: mainVariantId,
               branch_id: branchId,
               qty_on_hand: body.qty ?? 0,
@@ -395,5 +366,62 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     return ok(data, 200);
   } catch (err: any) {
     return fail(err?.message || "تعذّر تحديث المنتج", 400);
+  }
+}
+
+/* ========= DELETE ========= */
+export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  try {
+    const supabase = await createServerSupabase();      // قراءة/تحقق
+    const admin = createServiceRoleSupabase();          // كتابة محمية بـ RLS
+    const { id } = await ctx.params;
+    const product_id = id;
+
+    // تأكيد الوجود
+    const { data: exists, error: e0 } = await supabase
+      .from("products").select("id").eq("id", product_id).maybeSingle();
+    if (e0) return fail(e0.message, 400, { where: "exists/products" });
+    if (!exists?.id) return fail("المنتج غير موجود", 404);
+
+    // 1) صور
+    await admin.from("product_images").delete().eq("product_id", product_id);
+
+    // 2) وسوم وتصنيفات
+    await admin.from("product_tags").delete().eq("product_id", product_id);
+    await admin.from("product_taxons").delete().eq("product_id", product_id);
+
+    // 3) خيارات وقيمها + ربطها مع الفاريِنتات
+    const { data: opts } = await supabase
+      .from("product_options").select("id").eq("product_id", product_id);
+    if (opts?.length) {
+      const optIds = opts.map(o => o.id);
+      const { data: vals } = await supabase
+        .from("product_option_values").select("id").in("option_id", optIds);
+      if (vals?.length) {
+        const valIds = vals.map(v => v.id);
+        await admin.from("variant_option_values").delete().in("option_value_id", valIds);
+        await admin.from("product_option_values").delete().in("id", valIds);
+      }
+      await admin.from("product_options").delete().in("id", optIds);
+    }
+
+    // 4) الفاريِنتات وأسعارها ومخزونها
+    const { data: vars } = await supabase
+      .from("product_variants").select("id").eq("product_id", product_id);
+    if (vars?.length) {
+      const vIds = vars.map(v => v.id);
+      await admin.from("variant_inventory").delete().in("variant_id", vIds);
+      await admin.from("variant_prices").delete().in("variant_id", vIds);
+      await admin.from("variant_option_values").delete().in("variant_id", vIds);
+      await admin.from("product_variants").delete().in("id", vIds);
+    }
+
+    // 5) أخيرًا: المنتج
+    const { error: delErr } = await admin.from("products").delete().eq("id", product_id);
+    if (delErr) return fail(delErr.message, 400, { where: "delete/products" });
+
+    return ok({ id: product_id }, 200);
+  } catch (err: any) {
+    return fail(err?.message || "تعذّر حذف المنتج", 400);
   }
 }
