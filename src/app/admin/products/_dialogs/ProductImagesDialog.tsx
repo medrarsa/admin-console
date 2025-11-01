@@ -29,7 +29,7 @@ export default function ProductImagesDialog({
   const [busy, setBusy] = React.useState(false);
   const [files, setFiles] = React.useState<FileList | null>(null);
 
-  // fetch images
+  // fetch images on open
   React.useEffect(() => {
     let alive = true;
     (async () => {
@@ -37,12 +37,14 @@ export default function ProductImagesDialog({
         setLoading(true);
         const res = await fetch(`/api/admin/products/${product.id}/images`, { cache: "no-store" });
         const j = await res.json();
-        if (alive) setList(j?.data ?? []);
+        if (alive) setList((j?.data ?? []) as Img[]);
       } finally {
         if (alive) setLoading(false);
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [product.id]);
 
   async function doUpload() {
@@ -61,8 +63,13 @@ export default function ProductImagesDialog({
       const j = await res.json();
       if (!res.ok || !j?.success) throw new Error(j?.error || "upload failed");
 
-      setList((prev) => [...prev, ...j.data].sort((a, b) => a.sort_order - b.sort_order));
+      const next = [...list, ...j.data].sort((a, b) => a.sort_order - b.sort_order);
+      setList(next);
       setFiles(null);
+
+      // لو صارت أول صورة جديدة أساسية تلقائيًا حدّث بطاقة المنتج
+      const primary = next.find((x) => x.is_primary);
+      if (primary?.url) onSaved({ imageUrl: primary.url });
     } catch (e: any) {
       alert(`فشل رفع الصور: ${e?.message || e}`);
     } finally {
@@ -81,10 +88,7 @@ export default function ProductImagesDialog({
       const j = await res.json();
       if (!res.ok || !j?.success) throw new Error(j?.error || "failed to set primary");
 
-      setList((prev) =>
-        prev.map((x) => ({ ...x, is_primary: x.id === imgId }))
-      );
-      // حدث صورة البطاقة الأساسية في الواجهة
+      setList((prev) => prev.map((x) => ({ ...x, is_primary: x.id === imgId })));
       const primaryUrl = list.find((x) => x.id === imgId)?.url;
       if (primaryUrl) onSaved({ imageUrl: primaryUrl });
     } catch (e: any) {
@@ -106,6 +110,13 @@ export default function ProductImagesDialog({
       const j = await res.json();
       if (!res.ok || !j?.success) throw new Error(j?.error || "failed to delete");
       setList((prev) => prev.filter((x) => x.id !== img.id));
+
+      // إن حذفنا الأساسية، عيّن أول صورة متبقية كأساسية محليًا (اختياري)
+      if (img.is_primary) {
+        const first = list.find((x) => x.id !== img.id);
+        if (first) setPrimary(first.id);
+        else onSaved({ imageUrl: undefined });
+      }
     } catch (e: any) {
       alert(`فشل الحذف: ${e?.message || e}`);
     } finally {
@@ -113,13 +124,12 @@ export default function ProductImagesDialog({
     }
   }
 
-  // (اختياري) ترتيب بسيط لأعلى/أسفل
+  // ترتيب بسيط لأعلى/أسفل
   async function move(idx: number, dir: -1 | 1) {
     const next = [...list];
     const j = idx + dir;
     if (j < 0 || j >= next.length) return;
     [next[idx], next[j]] = [next[j], next[idx]];
-    // أعد حساب sort_order محليًا
     setList(next.map((x, i) => ({ ...x, sort_order: i })));
 
     try {
@@ -128,8 +138,8 @@ export default function ProductImagesDialog({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ order: next.map((x) => x.id) }),
       });
-      const jres = await res.json();
-      if (!res.ok || !jres?.success) throw new Error(jres?.error || "reorder failed");
+      const jr = await res.json();
+      if (!res.ok || !jr?.success) throw new Error(jr?.error || "reorder failed");
     } catch (e: any) {
       alert(`فشل الترتيب: ${e?.message || e}`);
     }
@@ -163,7 +173,7 @@ export default function ProductImagesDialog({
               <button
                 onClick={doUpload}
                 disabled={busy || !files || !files.length}
-                className="inline-flex items-center gap-2 rounded-xl bg-teال-600 px-4 py-2 text-sm font-semibold text-white shadow disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow disabled:opacity-50"
               >
                 <Upload className="h-4 w-4" />
                 رفع
