@@ -5,17 +5,16 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import createServerSupabase, { createServiceRoleSupabase } from "@/lib/supabase/server";
 
-const BUCKET = "products"; // تأكد أنه Public
+const BUCKET = "products"; // تأكد أن الباكت موجود ومفعل Public
 
 function extOf(name: string) {
   const e = (name.split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "");
   return e || "bin";
 }
-// ⛳️ لا نكرر اسم البكت
 function storagePath(productId: string, fname: string) {
+  // لا نكرر اسم البكت داخل المسار
   return `${productId}/${fname}`;
 }
-
 const ok = (data: any, status = 200) => NextResponse.json({ success: true, status, data }, { status });
 const fail = (error: string, status = 400, meta?: any) =>
   NextResponse.json({ success: false, status, error, meta }, { status });
@@ -46,6 +45,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     const supa = await createServerSupabase(); // read
     const admin = createServiceRoleSupabase(); // write + storage
 
+    // تأكد وجود المنتج
     const { data: p, error: e0 } = await supa.from("products").select("id").eq("id", product_id).maybeSingle();
     if (e0) return fail(e0.message, 400, { where: "exists/products" });
     if (!p?.id) return fail("المنتج غير موجود", 404);
@@ -55,14 +55,20 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     const alts = form.getAll("alts").map((v) => String(v));
     if (!files?.length) return fail("no files[] provided", 400);
 
-    const { data: curPrimary } = await supa
-      .from("product_images")
-      .select("id")
-      .eq("product_id", product_id)
-      .eq("is_primary", true)
-      .limit(1)
-      .maybeSingle();
+    // تحقّق آمن من وجود أساسية حالياً
+    let hasPrimary = false;
+    {
+      const { data: curP, error: eP } = await supa
+        .from("product_images")
+        .select("id")
+        .eq("product_id", product_id)
+        .eq("is_primary", true)
+        .limit(1)
+        .maybeSingle();
+      hasPrimary = !!(curP && curP.id && !eP);
+    }
 
+    // آخر sort_order
     const { data: curMax } = await supa
       .from("product_images")
       .select("sort_order")
@@ -91,7 +97,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         product_id,
         url: pub.publicUrl,
         alt: alts[i] ? alts[i] : null,
-        is_primary: !curPrimary && i === 0, // اجعل الأولى أساسية لو لم توجد
+        // ✅ عيّن الأساسية فقط إذا تأكدنا عدم وجود أساسية مسبقًا
+        is_primary: !hasPrimary && i === 0,
         sort_order: order++,
         type: "image",
         video_url: null,
@@ -99,6 +106,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       });
     }
 
+    // الإدراج
     const { data: inserted, error: insErr } = await admin
       .from("product_images")
       .insert(rows)
