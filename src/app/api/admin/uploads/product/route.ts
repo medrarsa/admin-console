@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceRoleSupabase } from "@/lib/supabase/server";
 
-const BUCKET = "site-assets"; // بدّلها إلى اسم باكتك إن رغبت (مثلاً "products")
+const BUCKET = "site-assets"; // بدّلها إلى اسم البكت لديك (مثلاً "products")
 
 function extOf(name: string) {
   const e = (name.split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -13,7 +13,8 @@ function extOf(name: string) {
 }
 
 function objPath(productId: string, fname: string) {
-  return `products/${productId}/${fname}`; // بنية المجلدات: products/<productId>/...
+  // بنية المجلدات: products/<productId>/...
+  return `products/${productId}/${fname}`;
 }
 
 const ok = (data: any, status = 200) =>
@@ -26,7 +27,7 @@ const fail = (error: string, status = 400, meta?: any) =>
  * FormData:
  * - productId: string (مطلوب)
  * - files: File[] (واحد أو أكثر)
- * - alts: string[] (اختياري، نفس ترتيب files)
+ * - alts: string[] (اختياري، بنفس ترتيب files)
  */
 export async function POST(req: NextRequest) {
   try {
