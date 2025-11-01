@@ -1,8 +1,6 @@
 // src/app/api/admin/uploads/brand/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { promises as fs } from "fs";
-import path from "path";
-import crypto from "crypto";
+import { createServiceRoleSupabase } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -15,27 +13,42 @@ function extOf(name: string) {
 }
 
 export async function POST(req: NextRequest) {
-  const form = await req.formData();
-  const file = form.get("file") as File | null;
-  const keyPrefixRaw = String(form.get("keyPrefix") || "brand");
-  const kind = (String(form.get("kind") || "file") as "logo" | "banner" | "file");
+  try {
+    const form = await req.formData();
+    const file = form.get("file") as File | null;
+    const keyPrefixRaw = String(form.get("keyPrefix") || "brand");
+    const kind = (String(form.get("kind") || "file") as "logo" | "banner" | "file");
 
-  if (!file) return NextResponse.json({ message: "file is required" }, { status: 400 });
+    if (!file) return NextResponse.json({ message: "file is required" }, { status: 400 });
 
-  const keyPrefix = sanitize(keyPrefixRaw) || "brand";
+    const admin = createServiceRoleSupabase(); // نستخدم Service-Role للرفع
+    const keyPrefix = sanitize(keyPrefixRaw) || "brand";
+    const ext = extOf(file.name);
+    const fname = `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const objectPath = `brands/${keyPrefix}/${fname}`;
 
-  // ✅ خزّن داخل /public/image/catalog/brands
-  const baseDir = path.join(process.cwd(), "public", "image", "catalog", "brands", keyPrefix);
-  await fs.mkdir(baseDir, { recursive: true });
+    // حوّل File إلى ArrayBuffer → Buffer
+    const ab = await file.arrayBuffer();
+    const buf = Buffer.from(ab);
 
-  const ext = extOf(file.name);
-  const fname = `${kind}-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.${ext}`;
-  const absPath = path.join(baseDir, fname);
+    // ارفع إلى باكت عام
+    const { error: upErr } = await admin.storage
+      .from("brand-assets")
+      .upload(objectPath, buf, {
+        upsert: true,
+        contentType: file.type || "application/octet-stream",
+      });
 
-  const buf = Buffer.from(await file.arrayBuffer());
-  await fs.writeFile(absPath, buf);
+    if (upErr) {
+      return NextResponse.json({ message: "upload failed", error: upErr.message }, { status: 500 });
+    }
 
-  // ✅ هذا الرابط قابل للعرض مباشرة بدون أي Route
-  const publicUrl = `/image/catalog/brands/${keyPrefix}/${fname}`;
-  return NextResponse.json({ ok: true, url: publicUrl });
+    // استخرج الرابط العام
+    const { data: pub } = admin.storage.from("brand-assets").getPublicUrl(objectPath);
+    const publicUrl = pub.publicUrl; // رابط مباشر صالح للعرض
+
+    return NextResponse.json({ ok: true, url: publicUrl });
+  } catch (e: any) {
+    return NextResponse.json({ message: e?.message || "unexpected error" }, { status: 500 });
+  }
 }
