@@ -1,5 +1,6 @@
+// src/app/api/admin/brands/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import createClient from "@/lib/supabase/server";
+import createClient, { createServiceRoleSupabase } from "@/lib/supabase/server";
 import { z } from "zod";
 
 /* سماح أثناء التطوير لتسهيل الاختبار */
@@ -15,12 +16,13 @@ function assertAdmin(req: NextRequest) {
 }
 
 /* يسمح بـ URL خارجي أو مسار يبدأ بـ / (مثل /image/catalog/...) */
-const UrlOrPath = z.string().refine(
-  (v) => v === undefined || v === null || v === "" || v.startsWith("http") || v.startsWith("/"),
-  "Invalid URL"
-);
+const UrlOrPath = z
+  .string()
+  .refine(
+    (v) => v === undefined || v === null || v === "" || v.startsWith("http") || v.startsWith("/"),
+    "Invalid URL"
+  );
 
-/* لو slug فاضي نتجاهل كامل كائن الـSEO */
 const SeoSchema = z.object({
   slug: z.string().min(1),
   meta_title: z.string().optional(),
@@ -43,6 +45,7 @@ const CreateBrandSchema = z.object({
   }, SeoSchema).optional(),
 });
 
+/** GET /api/admin/brands */
 export async function GET(req: NextRequest) {
   const guard = assertAdmin(req);
   if (guard) return guard;
@@ -85,20 +88,26 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ data, page, per, total: count ?? data.length });
 }
 
+/** POST /api/admin/brands */
 export async function POST(req: NextRequest) {
   const guard = assertAdmin(req);
   if (guard) return guard;
 
-  const supabase = await createClient();
+  const supabase = await createClient();                // للقراءة
+  const admin = createServiceRoleSupabase();            // للكتابة (RLS)
 
   const body = await req.json();
   const parsed = CreateBrandSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ message: "Validation failed", errors: parsed.error.flatten() }, { status: 422 });
+    return NextResponse.json(
+      { message: "Validation failed", errors: parsed.error.flatten() },
+      { status: 422 }
+    );
   }
   const payload = parsed.data;
 
-  const { data: brand, error: insErr } = await supabase
+  // إنشاء/تحديث الماركة بالاسم (onConflict=name)
+  const { data: brand, error: insErr } = await admin
     .from("brands")
     .upsert(
       {
@@ -119,6 +128,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ message: "Failed to create brand", error: insErr }, { status: 500 });
   }
 
+  // صفحة SEO (اختياري)
   if (payload.seo?.slug) {
     const seoRow = {
       entity_type: "brand",
@@ -129,7 +139,7 @@ export async function POST(req: NextRequest) {
       meta_description: payload.seo.meta_description ?? null,
       is_active: payload.seo.is_active ?? true,
     };
-    const { error: seoErr } = await supabase
+    const { error: seoErr } = await admin
       .from("seo_pages")
       .upsert(seoRow, { onConflict: "entity_type,entity_id,lang" });
     if (seoErr) {

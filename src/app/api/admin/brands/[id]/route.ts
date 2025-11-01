@@ -1,5 +1,6 @@
+// src/app/api/admin/brands/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import createClient from "@/lib/supabase/server";
+import createClient, { createServiceRoleSupabase } from "@/lib/supabase/server";
 import { z } from "zod";
 
 function assertAdmin(req: NextRequest) {
@@ -13,10 +14,12 @@ function assertAdmin(req: NextRequest) {
   return null;
 }
 
-const UrlOrPath = z.string().refine(
-  (v) => v === undefined || v === null || v === "" || v.startsWith("http") || v.startsWith("/"),
-  "Invalid URL"
-);
+const UrlOrPath = z
+  .string()
+  .refine(
+    (v) => v === undefined || v === null || v === "" || v.startsWith("http") || v.startsWith("/"),
+    "Invalid URL"
+  );
 
 const SeoSchema = z.object({
   slug: z.string().min(1).optional(),
@@ -41,10 +44,7 @@ const UpdateBrandSchema = z.object({
 });
 
 /** GET /api/admin/brands/[id] */
-export async function GET(
-  _req: NextRequest,
-  ctx: { params: Promise<{ id: string }> }
-) {
+export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   const supabase = await createClient();
   const { data, error } = await supabase.from("brands").select("*").eq("id", id).single();
@@ -53,29 +53,30 @@ export async function GET(
 }
 
 /** PATCH /api/admin/brands/[id] */
-export async function PATCH(
-  req: NextRequest,
-  ctx: { params: Promise<{ id: string }> }
-) {
+export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const guard = assertAdmin(req);
   if (guard) return guard;
 
   const { id } = await ctx.params;
-  const supabase = await createClient();
+  const supabase = await createClient();             // للقراءة
+  const admin = createServiceRoleSupabase();         // للكتابة
 
   const body = await req.json();
   const parsed = UpdateBrandSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ message: "Validation failed", errors: parsed.error.flatten() }, { status: 422 });
+    return NextResponse.json(
+      { message: "Validation failed", errors: parsed.error.flatten() },
+      { status: 422 }
+    );
   }
   const payload = parsed.data;
 
   const update: any = {};
-  for (const k of ["name","description","ar_char","en_char","logo","banner","is_active"] as const) {
+  for (const k of ["name", "description", "ar_char", "en_char", "logo", "banner", "is_active"] as const) {
     if (k in payload) update[k] = (payload as any)[k];
   }
   if (Object.keys(update).length) {
-    const { error: upErr } = await supabase.from("brands").update(update).eq("id", id);
+    const { error: upErr } = await admin.from("brands").update(update).eq("id", id);
     if (upErr) return NextResponse.json({ message: "Update failed", error: upErr }, { status: 500 });
   }
 
@@ -86,12 +87,15 @@ export async function PATCH(
     if (payload.seo.meta_description !== undefined) seo.meta_description = payload.seo.meta_description;
     if (payload.seo.is_active !== undefined) seo.is_active = payload.seo.is_active;
 
-    const { error: seoErr } = await supabase
+    const { error: seoErr } = await admin
       .from("seo_pages")
       .upsert(seo, { onConflict: "entity_type,entity_id,lang" });
 
     if (seoErr) {
-      return NextResponse.json({ message: "Brand updated but SEO failed", seo_error: seoErr }, { status: 207 });
+      return NextResponse.json(
+        { message: "Brand updated but SEO failed", seo_error: seoErr },
+        { status: 207 }
+      );
     }
   }
 
@@ -99,34 +103,36 @@ export async function PATCH(
 }
 
 /** DELETE /api/admin/brands/[id]?force=true */
-export async function DELETE(
-  req: NextRequest,
-  ctx: { params: Promise<{ id: string }> }
-) {
+export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const guard = assertAdmin(req);
   if (guard) return guard;
 
   const { id } = await ctx.params;
-  const supabase = await createClient();
+  const supabase = await createClient();             // للقراءة
+  const admin = createServiceRoleSupabase();         // للكتابة
   const force = new URL(req.url).searchParams.get("force") === "true";
 
   // احذف صفحة الـ SEO إن وجدت
-  await supabase.from("seo_pages").delete().match({ entity_type: "brand", entity_id: id });
+  await admin.from("seo_pages").delete().match({ entity_type: "brand", entity_id: id });
 
   // حاول حذف الماركة
-  let { error: delErr } = await supabase.from("brands").delete().eq("id", id);
+  let { error: delErr } = await admin.from("brands").delete().eq("id", id);
 
   // معالجة قيود FK (products.brand_id)
   if (delErr && (delErr as any).code === "23503") {
     if (!force) {
       return NextResponse.json(
-        { message: "لا يمكن الحذف: الماركة مرتبطة بمنتجات. أعد المحاولة مع force=true أو عطّلها بدلًا من الحذف.", code: delErr.code },
+        {
+          message:
+            "لا يمكن الحذف: الماركة مرتبطة بمنتجات. أعد المحاولة مع force=true أو عطّلها بدلًا من الحذف.",
+          code: delErr.code,
+        },
         { status: 409 }
       );
     }
     // force=true => فك الربط ثم احذف
-    await supabase.from("products").update({ brand_id: null }).eq("brand_id", id);
-    ({ error: delErr } = await supabase.from("brands").delete().eq("id", id));
+    await admin.from("products").update({ brand_id: null }).eq("brand_id", id);
+    ({ error: delErr } = await admin.from("brands").delete().eq("id", id));
   }
 
   if (delErr) {
