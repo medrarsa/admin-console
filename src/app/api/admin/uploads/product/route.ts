@@ -5,16 +5,16 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceRoleSupabase } from "@/lib/supabase/server";
 
-const BUCKET = "site-assets"; // بدّلها إلى اسم البكت لديك (مثلاً "products")
+const BUCKET = "products"; // تأكد البكت Public واسمه products
 
 function extOf(name: string) {
   const e = (name.split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "");
   return e || "bin";
 }
 
+// ⛳️ لا نكرر اسم البكت داخل المسار
 function objPath(productId: string, fname: string) {
-  // بنية المجلدات: products/<productId>/...
-  return `products/${productId}/${fname}`;
+  return `${productId}/${fname}`;
 }
 
 const ok = (data: any, status = 200) =>
@@ -25,9 +25,9 @@ const fail = (error: string, status = 400, meta?: any) =>
 /**
  * POST /api/admin/uploads/product
  * FormData:
- * - productId: string (مطلوب)
- * - files: File[] (واحد أو أكثر)
- * - alts: string[] (اختياري، بنفس ترتيب files)
+ * - productId: string (required)
+ * - files: File[] (one or more)
+ * - alts: string[] (optional, same order as files)
  */
 export async function POST(req: NextRequest) {
   try {
@@ -52,10 +52,7 @@ export async function POST(req: NextRequest) {
       const buf = Buffer.from(await f.arrayBuffer());
       const { error: upErr } = await admin.storage
         .from(BUCKET)
-        .upload(path, buf, {
-          upsert: true,
-          contentType: f.type || "application/octet-stream",
-        });
+        .upload(path, buf, { upsert: true, contentType: f.type || "application/octet-stream" });
       if (upErr) return fail(upErr.message, 500, { where: "storage/upload" });
 
       const { data: pub } = admin.storage.from(BUCKET).getPublicUrl(path);

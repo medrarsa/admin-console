@@ -15,6 +15,7 @@ type DBImage = {
   product_id: string;
   url: string | null;
   is_primary: boolean | null;
+  sort_order: number | null;
 };
 
 type DBVariant = { id: string; product_id: string };
@@ -68,10 +69,10 @@ export default async function AdminProductsListPage() {
 
   const ids = products.map((p) => p.id);
 
-  // 2) الصور
+  // 2) الصور — نجلب sort_order أيضًا
   const { data: imgsRaw } = await supabase
     .from("product_images")
-    .select("product_id,url,is_primary")
+    .select("product_id,url,is_primary,sort_order")
     .in("product_id", ids);
 
   const imgs = (imgsRaw ?? []) as DBImage[];
@@ -92,6 +93,7 @@ export default async function AdminProductsListPage() {
   }
 
   const vIds = Array.from(new Set(variants.map((v) => v.id)));
+
   // 4) الأسعار
   const { data: pricesRaw } = vIds.length
     ? await supabase
@@ -127,12 +129,18 @@ export default async function AdminProductsListPage() {
     return acc;
   }, new Map());
 
-  // اختيار صورة (الأولوية للصورة الأساسية)
+  // اختيار صورة (الأولوية للأساسية ثم أقل sort_order)
   const pickImage = (pid: string) => {
     const set = imgs.filter((i) => i.product_id === pid);
     if (!set.length) return undefined;
-    const primary = set.find((x) => x.is_primary) ?? set[0];
-    return primary?.url ?? undefined;
+
+    const primary = set.find((x) => x.is_primary);
+    if (primary?.url) return primary.url || undefined;
+
+    const sorted = set
+      .slice()
+      .sort((a, b) => (a.sort_order ?? 999999) - (b.sort_order ?? 999999));
+    return sorted[0]?.url || undefined;
   };
 
   // تحويل بيانات الـDB إلى ما يفهمه العميل
@@ -147,7 +155,7 @@ export default async function AdminProductsListPage() {
       id: p.id,
       name: p.name,
       status: p.status,
-      imageUrl: pickImage(p.id),
+      imageUrl: pickImage(p.id), // 👈 الأساس/الأول بالترتيب
       price: pr.price,
       salePrice: pr.sale ?? undefined,
       qty,
@@ -161,7 +169,6 @@ export default async function AdminProductsListPage() {
       shortTitle: "",
       seoTitleTpl: "{brand} {category} {name} {years}",
       seoSlugTpl: "{brand}-{name}-{years}",
-      // ↓ lowercase علشان resolveTokens تبعك يعتمد lower-case
       seoDescTpl:
         "رمز: {sku} — الماركة: {brand} — التصنيف: {category} — اسم المنتج: {name}",
 
