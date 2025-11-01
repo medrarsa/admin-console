@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import createServerSupabase, { createServiceRoleSupabase } from "@/lib/supabase/server";
 
-const BUCKET = "site-assets"; // أو "products" لو عامل باكت للمنتجات
+const BUCKET = "products"; // أو "products" لو عامل باكت للمنتجات
 function objPath(productId: string, fname: string) {
   return `products/${productId}/${fname}`;
 }
