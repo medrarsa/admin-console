@@ -1,3 +1,4 @@
+// src/app/api/admin/uploads/brand/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
@@ -23,7 +24,7 @@ export async function POST(req: NextRequest) {
 
   const keyPrefix = sanitize(keyPrefixRaw) || "brand";
 
-  // 👇 نحفظ داخل public (مش src)
+  // ✅ خزّن داخل /public/image/catalog/brands
   const baseDir = path.join(process.cwd(), "public", "image", "catalog", "brands", keyPrefix);
   await fs.mkdir(baseDir, { recursive: true });
 
@@ -34,7 +35,7 @@ export async function POST(req: NextRequest) {
   const buf = Buffer.from(await file.arrayBuffer());
   await fs.writeFile(absPath, buf);
 
-  // رابط جاهز للعرض فورًا
+  // ✅ هذا الرابط قابل للعرض مباشرة بدون أي Route
   const publicUrl = `/image/catalog/brands/${keyPrefix}/${fname}`;
   return NextResponse.json({ ok: true, url: publicUrl });
 }
