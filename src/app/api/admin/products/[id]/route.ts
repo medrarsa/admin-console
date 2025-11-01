@@ -16,12 +16,14 @@ type Body = {
   name?: string;
   tags?: string[];
   brand?: string | null;
+
   sku?: string | null;
   costPrice?: number | null;
   price?: number | null;
   salePrice?: number | null;
   discountEnd?: string | null;
   qty?: number | null;
+
   shortTitle?: string | null;
   years?: string | null;
   descriptionHtml?: string | null;
@@ -70,7 +72,12 @@ async function pickBranchId(db: any) {
   const code = process.env.DEFAULT_BRANCH_CODE || "MAIN";
   const { data: byCode } = await db.from("branches").select("id").eq("code", code).maybeSingle();
   if (byCode?.id) return byCode.id;
-  const { data: first } = await db.from("branches").select("id").order("created_at", { ascending: true }).limit(1).maybeSingle();
+  const { data: first } = await db
+    .from("branches")
+    .select("id")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
   return first?.id ?? null;
 }
 
@@ -166,17 +173,20 @@ async function buildProductDetails(db: any, product_id: string) {
     name: p.name,
     type: p.product_type ?? "product",
     status: p.status ?? "active",
+
     price: { amount: mainPrice?.price ?? 0, currency: mainPrice?.currency ?? "SAR" },
     sale_price: { amount: mainPrice?.sale_price ?? 0, currency: mainPrice?.currency ?? "SAR" },
     sale_end: mainPrice?.ends_at ?? null,
     main_cost_price: mainCost,
     quantity,
+
     short_title: p.short_title ?? null,
     years: p.years ?? null,
     description_html: p.description_html ?? null,
     seo_title_tpl: p.seo_title_tpl ?? null,
     seo_slug_tpl: p.seo_slug_tpl ?? null,
     seo_desc_tpl: p.seo_desc_tpl ?? null,
+
     brand,
     channels,
     tags,
@@ -191,6 +201,7 @@ async function buildProductDetails(db: any, product_id: string) {
         video_url: im.video_url ?? null,
         three_d_image_url: im.three_d_image_url ?? null,
       })) ?? [],
+
     skus: (variants || []).map((v: any) => {
       const vp = priceMap.get(v.id) as PriceRow | undefined;
       const iv = invMap.get(v.id) as InvRow | undefined;
@@ -237,7 +248,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     if (e0) return fail(e0.message, 400, { where: "exists/products" });
     if (!exists?.id) return fail("المنتج غير موجود", 404);
 
-    // 1) تحديث الاسم
+    // 1) اسم المنتج
     if (typeof body.name === "string") {
       const nm = body.name.trim();
       if (nm.length < 3 || nm.length > 200) return fail("اسم المنتج يجب أن يكون بين 3 و 200 حرفًا", 400);
@@ -254,7 +265,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     if (typeof body.seoSlugTpl      !== "undefined") prodPatch.seo_slug_tpl     = body.seoSlugTpl;
     if (typeof body.seoDescTpl      !== "undefined") prodPatch.seo_desc_tpl     = body.seoDescTpl;
     if (typeof body.brand !== "undefined") {
-      const brand_id = await upsertBrand(admin, body.brand); // admin لأنه INSERT محتمل
+      const brand_id = await upsertBrand(admin, body.brand);
       prodPatch.brand_id = brand_id;
     }
     if (Object.keys(prodPatch).length) {
@@ -264,7 +275,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
 
     // 3) tags
     if (Array.isArray(body.tags)) {
-      const tagIds = await ensureTags(admin, body.tags); // INSERT محتمل
+      const tagIds = await ensureTags(admin, body.tags);
       const { error: dErr } = await admin.from("product_tags").delete().eq("product_id", product_id);
       if (dErr) return fail(dErr.message, 400, { where: "delete/product_tags" });
       if (tagIds.length) {
@@ -377,7 +388,7 @@ export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: str
     const { id } = await ctx.params;
     const product_id = id;
 
-    // تأكيد الوجود
+    // وجود المنتج
     const { data: exists, error: e0 } = await supabase
       .from("products").select("id").eq("id", product_id).maybeSingle();
     if (e0) return fail(e0.message, 400, { where: "exists/products" });
@@ -410,6 +421,10 @@ export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: str
       .from("product_variants").select("id").eq("product_id", product_id);
     if (vars?.length) {
       const vIds = vars.map(v => v.id);
+
+      // ✅ احذف معاملات المخزون أولاً لحلّ FK
+      await admin.from("variant_inventory_transactions").delete().in("variant_id", vIds);
+
       await admin.from("variant_inventory").delete().in("variant_id", vIds);
       await admin.from("variant_prices").delete().in("variant_id", vIds);
       await admin.from("variant_option_values").delete().in("variant_id", vIds);
