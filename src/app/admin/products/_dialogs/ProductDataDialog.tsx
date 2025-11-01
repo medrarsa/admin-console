@@ -1,3 +1,4 @@
+// src/app/admin/products/_dialogs/ProductDataDialog.tsx
 "use client";
 
 import * as React from "react";
@@ -64,6 +65,18 @@ async function patchProduct(id: string, payload: Record<string, any>) {
   if (!r.ok || !j?.success) throw new Error(j?.error || `PATCH ${r.status}`);
   return j.data;
 }
+/** جلب الماركات (مقيدة على حقول خفيفة) */
+async function fetchBrandsLite(q = "", page = 1, per = 200) {
+  const sp = new URLSearchParams();
+  if (q) sp.set("q", q);
+  sp.set("page", String(page));
+  sp.set("per", String(per));
+  const r = await fetch(`/api/admin/brands?${sp.toString()}`, { cache: "no-store" });
+  const j = await r.json();
+  // نعيد فقط ما نحتاجه
+  const options = (j?.data ?? []).map((b: any) => ({ id: b.id, name: b.name }));
+  return { options, total: j?.total ?? options.length };
+}
 
 /* ===== Component ===== */
 export default function ProductDataDialog({
@@ -74,13 +87,18 @@ export default function ProductDataDialog({
 
   // basics
   const [name, setName] = React.useState(product.name);
-  const [brand, setBrand] = React.useState<string>(product.brand ?? "");
-  const [sku, setSku] = React.useState(product.sku ?? "");
 
-  // prices (نحتفظ بنص الإدخال لمنع ضياع الأرقام العربية أثناء الكتابة)
+  /** الماركة: نخزن الاثنين
+   * brandId: من القائمة (المفضّل)
+   * brandName: اسم حرّ (fallback)
+   */
+  const [brandId, setBrandId] = React.useState<string | null>(null);
+  const [brandName, setBrandName] = React.useState<string>(product.brand ?? "");
+
+  // prices
   const [basePrice, setBasePrice] = React.useState<number | undefined>(product.price);
   const [costPrice, setCostPrice] = React.useState<number | undefined>(product.costPrice);
-  const [costPriceStr, setCostPriceStr] = React.useState<string>(""); // نص الحقل
+  const [costPriceStr, setCostPriceStr] = React.useState<string>("");
   const [salePrice, setSalePrice] = React.useState<number | undefined>(product.salePrice ?? product.price);
   const [salePriceStr, setSalePriceStr] = React.useState<string>("");
   const [discountEnd, setDiscountEnd] = React.useState(product.discountEnd ?? "");
@@ -94,9 +112,14 @@ export default function ProductDataDialog({
   const [seoDescTpl, setSeoDescTpl] = React.useState(product.seoDescTpl ?? "{sku} — {brand} — {category} — {name}");
 
   const ctx = React.useMemo(
-    () => ({ brand, category: product.localCategory ?? null, sku, name, years, price: basePrice, sale: salePrice }),
-    [brand, product.localCategory, sku, name, years, basePrice, salePrice]
+    () => ({ brand: brandName, category: product.localCategory ?? null, sku: product.sku ?? "", name, years, price: basePrice, sale: salePrice }),
+    [brandName, product.localCategory, product.sku, name, years, basePrice, salePrice]
   );
+
+  /* ===== Brands dropdown state ===== */
+  const [brandQ, setBrandQ] = React.useState("");
+  const [brandOpts, setBrandOpts] = React.useState<Array<{ id: string; name: string }>>([]);
+  const [brandLoading, setBrandLoading] = React.useState(false);
 
   /* ===== fetch fresh on open ===== */
   React.useEffect(() => {
@@ -107,12 +130,13 @@ export default function ProductDataDialog({
         const d = await getProductDetails(product.id);
 
         if (typeof d?.name === "string") setName(d.name);
-        setBrand(d?.brand?.name ?? product.brand ?? "");
 
+        // الماركة من الـ API (id + name)
+        if (d?.brand?.id) setBrandId(d.brand.id);
+        if (d?.brand?.name) setBrandName(d.brand.name ?? "");
+
+        // الأسعار/التواريخ
         const firstSku = Array.isArray(d?.skus) && d.skus.length ? d.skus[0] : null;
-        setSku(firstSku?.sku ?? product.sku ?? "");
-
-        // cost price: أفضلية للقيمة العلوية ثم أول SKU
         const cp =
           typeof d?.main_cost_price === "number"
             ? d.main_cost_price
@@ -120,9 +144,8 @@ export default function ProductDataDialog({
             ? firstSku.cost_price
             : undefined;
         setCostPrice(cp);
-        setCostPriceStr(typeof cp === "number" ? String(cp) : ""); // عشان نعرض في الحقل
+        setCostPriceStr(typeof cp === "number" ? String(cp) : "");
 
-        // prices summary
         const bp = typeof d?.price?.amount === "number" ? d.price.amount : product.price;
         setBasePrice(bp);
 
@@ -148,10 +171,23 @@ export default function ProductDataDialog({
         if (mounted) setLoading(false);
       }
     })();
-    return () => {
-      mounted = false;
-    };
-  }, [product.id]);
+    return () => { mounted = false; };
+  }, [product.id]); // eslint-disable-line
+
+  // جلب الماركات عند فتح المودال وأثناء البحث
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        setBrandLoading(true);
+        const { options } = await fetchBrandsLite(brandQ, 1, 200);
+        if (alive) setBrandOpts(options);
+      } finally {
+        if (alive) setBrandLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [brandQ]);
 
   /* ===== build & send patch ===== */
   function buildPatch() {
@@ -159,21 +195,21 @@ export default function ProductDataDialog({
 
     if (name.trim() !== product.name.trim()) patch.name = name.trim();
 
-    // أرسل التكلفة والمخفّض فقط إذا كانت قيمة صالحة (تجنّب null)
+    // التكاليف/الخصم
     const costNum = toNumberLoose(costPriceStr);
-    if (costPriceStr.trim() !== "" && costNum !== undefined) {
-      patch.costPrice = costNum;              // product_variants.cost_price
-    }
+    if (costPriceStr.trim() !== "" && costNum !== undefined) patch.costPrice = costNum;
 
     const saleNum = toNumberLoose(salePriceStr);
-    if (salePriceStr.trim() !== "" && saleNum !== undefined) {
-      patch.salePrice = saleNum;              // variant_prices.sale_price
+    if (salePriceStr.trim() !== "" && saleNum !== undefined) patch.salePrice = saleNum;
+
+    patch.discountEnd = discountEnd || null;
+
+    // الماركة — نُرسل brandId إن اختير، وإلا نُرسل brand بالنص (لتوافق الخلفية)
+    if (brandId) {
+      patch.brandId = brandId;
+    } else {
+      patch.brand = brandName || null;
     }
-
-    patch.discountEnd = discountEnd || null;  // variant_prices.ends_at
-
-    if ((sku || "") !== (product.sku || "")) patch.sku = sku || null;
-    if ((brand || "") !== (product.brand || "")) patch.brand = brand || null;
 
     // SEO/desc
     if (shortTitle !== (product.shortTitle || "")) patch.shortTitle = shortTitle || null;
@@ -191,11 +227,10 @@ export default function ProductDataDialog({
       setSaving(true);
       const patch = buildPatch();
 
-      // optimistic update (نفس منطق الإرسال)
+      // optimistic update للواجهة فقط
       onSaved({
         name,
-        brand,
-        sku,
+        brand: brandId ? brandOpts.find(o => o.id === brandId)?.name ?? brandName : brandName,
         costPrice: (costPriceStr.trim() !== "" ? toNumberLoose(costPriceStr) : undefined),
         salePrice: (salePriceStr.trim() !== "" ? toNumberLoose(salePriceStr) : undefined),
         discountEnd,
@@ -301,26 +336,54 @@ export default function ProductDataDialog({
                      value={discountEnd} onChange={(e) => setDiscountEnd(e.target.value)} />
             </div>
 
-            {/* SKU */}
-            <div className="rounded-2xl border border-zinc-200/70 bg-white/80 p-4">
-              <label className="mb-1 block text-xs text-zinc-600">رمز المخزون (SKU)</label>
-              <input className="w-full rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none"
-                     value={sku} onChange={(e) => setSku(e.target.value)} />
-            </div>
-
-            {/* Brand */}
+            {/* Brand — قائمة ديناميكية */}
             <div className="rounded-2xl border border-zinc-200/70 bg-white/80 p-4">
               <label className="mb-1 block text-xs text-zinc-600">الماركة</label>
-              <select className="w-full rounded-XL border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none"
-                      value={brand ?? ""} onChange={(e) => setBrand(e.target.value)}>
-                <option value="">ابحث عن ماركة</option>
-                <option value="MD">MD</option>
-                <option value="Toyota">Toyota</option>
-                <option value="DENSO">DENSO</option>
-                <option value="AISIN">AISIN</option>
-                <option value="DEPO">DEPO</option>
+
+              {/* مربع بحث مبسط */}
+              <input
+                className="mb-2 w-full rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none"
+                placeholder="ابحث عن ماركة…"
+                value={brandQ}
+                onChange={(e) => setBrandQ(e.currentTarget.value)}
+              />
+
+              <select
+                className="w-full rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none"
+                value={brandId ?? ""}
+                onChange={(e) => {
+                  const id = e.currentTarget.value || null;
+                  setBrandId(id);
+                  if (id) {
+                    const hit = brandOpts.find(b => b.id === id);
+                    setBrandName(hit?.name ?? "");
+                  }
+                }}
+              >
+                <option value="">{brandLoading ? "يحمّل الماركات…" : "— اختر ماركة —"}</option>
+                {brandOpts.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
               </select>
+
+              {/* خيار إدخال اسم حرّ (fallback) */}
+              <div className="mt-2 text-[12px] text-zinc-500">
+                أو اكتب اسمًا حرًّا:
+              </div>
+              <input
+                className="mt-1 w-full rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none"
+                placeholder="مثال: DENSO / AISIN"
+                value={brandName}
+                onChange={(e) => {
+                  setBrandName(e.currentTarget.value);
+                  setBrandId(null); // لو كتب اسم يدوي نلغي الاختيار
+                }}
+              />
             </div>
+
+            {/* SKU */}
+            {/* لاحظ: SKU يُدار في كارت المنتج/الفاريِنت غالبًا—هنا أبقيته إن أردته */}
+            {/* <div className="rounded-2xl border border-zinc-200/70 bg-white/80 p-4"> ... </div> */}
           </div>
 
           {/* SEO */}
@@ -331,20 +394,20 @@ export default function ProductDataDialog({
             <div className="space-y-4 p-4">
               <div>
                 <label className="mb-1 block text-xs text-zinc-600">العنوان التجاري المختصر</label>
-                <input className="w-full rounded-XL border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none"
+                <input className="w-full rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none"
                        value={shortTitle} onChange={(e) => setShortTitle(e.target.value)} />
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block text-xs text-zinc-600">(Page Title) عنوان صفحة المنتج</label>
-                  <input className="w-full rounded-XL border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none"
+                  <input className="w-full rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none"
                          value={seoTitleTpl} onChange={(e) => setSeoTitleTpl(e.target.value)} />
                   <div className="mt-1 text-[12px] text-emerald-700 truncate">{tokens(seoTitleTpl, ctx) || name}</div>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs text-zinc-600">(SEO Page URL) رابط صفحة المنتج</label>
-                  <input className="w-full rounded-XL border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none"
+                  <input className="w-full rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none"
                          value={seoSlugTpl} onChange={(e) => setSeoSlugTpl(e.target.value)} />
                   <div className="mt-1 text-[12px] text-emerald-700 truncate">{slugify(tokens(seoSlugTpl, ctx) || name)}</div>
                 </div>
@@ -352,7 +415,7 @@ export default function ProductDataDialog({
 
               <div>
                 <label className="mb-1 block text-xs text-zinc-600">(Page Description) وصف صفحة المنتج</label>
-                <textarea rows={3} className="w-full rounded-XL border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none"
+                <textarea rows={3} className="w-full rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none"
                           value={seoDescTpl} onChange={(e) => setSeoDescTpl(e.target.value)} />
                 <div className="mt-1 text-[12px] text-emerald-700 truncate">{tokens(seoDescTpl, ctx)}</div>
               </div>

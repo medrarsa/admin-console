@@ -15,7 +15,8 @@ const fail = (error: string, status = 400, meta?: any) =>
 type Body = {
   name?: string;
   tags?: string[];
-  brand?: string | null;
+  brand?: string | null;     // اسم حر (fallback)
+  brandId?: string | null;   // ✅ جديد: حفظ مباشر
 
   sku?: string | null;
   costPrice?: number | null;
@@ -264,10 +265,16 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     if (typeof body.seoTitleTpl     !== "undefined") prodPatch.seo_title_tpl    = body.seoTitleTpl;
     if (typeof body.seoSlugTpl      !== "undefined") prodPatch.seo_slug_tpl     = body.seoSlugTpl;
     if (typeof body.seoDescTpl      !== "undefined") prodPatch.seo_desc_tpl     = body.seoDescTpl;
-    if (typeof body.brand !== "undefined") {
+
+    // ✅ brandId المباشر أولًا (إن أُرسل)
+    if (typeof body.brandId === "string" && body.brandId?.trim()) {
+      prodPatch.brand_id = body.brandId.trim();
+    } else if (typeof body.brand !== "undefined") {
+      // fallback: اسم ماركة (upsert)
       const brand_id = await upsertBrand(admin, body.brand);
       prodPatch.brand_id = brand_id;
     }
+
     if (Object.keys(prodPatch).length) {
       const { error: e1 } = await admin.from("products").update(prodPatch).eq("id", product_id);
       if (e1) return fail(e1.message, 400, { where: "update/products/seo+extras" });
