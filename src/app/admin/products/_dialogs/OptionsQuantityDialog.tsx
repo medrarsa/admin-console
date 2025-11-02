@@ -20,33 +20,28 @@ export default function OptionsQuantityDialog({
   const [groups, setGroups] = React.useState<OptionGroup[]>(
     product.options?.length
       ? product.options
-      : [{ id: crypto.randomUUID(), type: "text", name: "", values: [] }]
+      : [{ id: crypto.randomUUID(), type: "text", name: "مقاس", values: [{ id: crypto.randomUUID(), label: "" }] }]
   );
   const [variants, setVariants] = React.useState<VariantRow[]>(
     product.variants ?? []
   );
 
-  // ---------- عند فتح المودال: جلب البيانات من الراوت ----------
+  // --------- عند الفتح: جلب الخيارات من الـ API ----------
   React.useEffect(() => {
     let alive = true;
     async function fetchOptions() {
       try {
         setLoading(true);
-        const res = await fetch(
-          `/api/admin/products/${product.id}/options`,
-          { method: "GET" }
-        );
+        const res = await fetch(`/api/admin/products/${product.id}/options`, { method: "GET" });
         if (!res.ok) throw new Error(`GET failed with ${res.status}`);
         const json = await res.json();
-        // GET لدينا يرجع: { status, success, data } أو { optionsEnabled, groups, variants }
-        // ندعمهما كلاهما:
+
         let nextGroups: OptionGroup[] = groups;
         let nextVariants: VariantRow[] = variants;
         let nextEnabled = enabled;
 
         if (json?.data && Array.isArray(json.data)) {
-          // صيغة: قائمة خيارات (سلة-ستايل) بدون SKUs
-          // نحوّلها إلى شكل المودال (OptionGroup[])
+          // صيغة سلة: data = قائمة خيارات
           const parsed: OptionGroup[] = json.data.map((o: any) => ({
             id: o.id,
             type: (o.display_type ?? "text") as OptionGroup["type"],
@@ -56,37 +51,80 @@ export default function OptionsQuantityDialog({
                   id: v.id,
                   label: v.name ?? "",
                   colorHex:
-                    (o.display_type === "color" ? v.display_value : undefined) ??
-                    undefined,
+                    (o.display_type === "color" ? v.display_value : undefined) ?? undefined,
                   imageUrl:
-                    (o.display_type === "image" ? v.image_url : undefined) ??
-                    undefined,
+                    (o.display_type === "image" ? v.image_url : undefined) ?? undefined,
                 }))
               : [],
           }));
-          nextGroups = parsed.length ? parsed : nextGroups;
-          // المتغيرات تُدار عبر PATCH، فالـ GET هذا غالبًا لا يعيدها → نخليها كما هي
-          // ونستنتج enabled:
-          nextEnabled =
-            parsed.length > 0 && parsed.some((g) => g.values.length > 0);
+
+          if (parsed.length === 0) {
+            // ما فيه خيارات محفوظة: جهّز افتراضي
+            nextGroups = [
+              {
+                id: crypto.randomUUID(),
+                type: "text",
+                name: "مقاس",
+                values: [{ id: crypto.randomUUID(), label: "" }],
+              },
+            ];
+            nextVariants = [];
+            nextEnabled = true;
+          } else {
+            nextGroups = parsed;
+            nextVariants = variants;
+            nextEnabled = parsed.some((g) => g.values.length > 0);
+          }
         } else if (
           typeof json?.optionsEnabled !== "undefined" &&
           Array.isArray(json?.groups) &&
           Array.isArray(json?.variants)
         ) {
-          // صيغة: { optionsEnabled, groups, variants }
+          // صيغة بديلة: optionsEnabled + groups + variants
           nextEnabled = !!json.optionsEnabled;
           nextGroups = json.groups;
           nextVariants = json.variants;
+
+          if (nextGroups.length === 0) {
+            nextGroups = [
+              {
+                id: crypto.randomUUID(),
+                type: "text",
+                name: "مقاس",
+                values: [{ id: crypto.randomUUID(), label: "" }],
+              },
+            ];
+            nextVariants = [];
+            nextEnabled = true;
+          }
+        } else {
+          // رد غير متوقع -> افتراضي
+          nextGroups = [
+            {
+              id: crypto.randomUUID(),
+              type: "text",
+              name: "مقاس",
+              values: [{ id: crypto.randomUUID(), label: "" }],
+            },
+          ];
+          nextVariants = [];
+          nextEnabled = true;
         }
 
         if (alive) {
           setEnabled(nextEnabled);
-          setGroups(nextGroups.length ? nextGroups : [{ id: crypto.randomUUID(), type: "text", name: "", values: [] }]);
-          setVariants(nextVariants ?? []);
+          setGroups(nextGroups);
+          setVariants(nextVariants);
         }
       } catch {
-        // تجاهل الخطأ — نخلي الحالة الحالية
+        // في حال الفشل، نحتفظ بالافتراضي
+        if (alive) {
+          setEnabled(true);
+          setGroups([
+            { id: crypto.randomUUID(), type: "text", name: "مقاس", values: [{ id: crypto.randomUUID(), label: "" }] },
+          ]);
+          setVariants([]);
+        }
       } finally {
         if (alive) setLoading(false);
       }
@@ -105,9 +143,10 @@ export default function OptionsQuantityDialog({
   }, [onClose]);
 
   function addGroup() {
+    if (!enabled) setEnabled(true);
     setGroups((g) => [
       ...g,
-      { id: crypto.randomUUID(), type: "text", name: "", values: [] },
+      { id: crypto.randomUUID(), type: "text", name: "مقاس", values: [{ id: crypto.randomUUID(), label: "" }] },
     ]);
   }
   function removeGroup(id: string) {
@@ -118,15 +157,13 @@ export default function OptionsQuantityDialog({
   }
   function addValue(groupId: string, label: string) {
     if (!label.trim()) return;
+    if (!enabled) setEnabled(true);
     setGroups((g) =>
       g.map((gg) =>
         gg.id === groupId
           ? {
               ...gg,
-              values: [
-                ...gg.values,
-                { id: crypto.randomUUID(), label: label.trim() },
-              ],
+              values: [...gg.values, { id: crypto.randomUUID(), label: label.trim() }],
             }
           : gg
       )
@@ -135,9 +172,7 @@ export default function OptionsQuantityDialog({
   function removeValue(groupId: string, valId: string) {
     setGroups((g) =>
       g.map((gg) =>
-        gg.id === groupId
-          ? { ...gg, values: gg.values.filter((v) => v.id !== valId) }
-          : gg
+        gg.id === groupId ? { ...gg, values: gg.values.filter((v) => v.id !== valId) } : gg
       )
     );
   }
@@ -179,39 +214,30 @@ export default function OptionsQuantityDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     enabled,
-    JSON.stringify(
-      groups.map((g) => ({ id: g.id, v: g.values.map((x) => x.id) }))
-    ),
+    JSON.stringify(groups.map((g) => ({ id: g.id, v: g.values.map((x) => x.id) }))),
   ]);
 
   async function saveAll() {
     setSaving(true);
     try {
-      // لو تبغى تحديد فرع بعينه للكمية: مرّر branchId هنا
-      // const branchId = "YOUR-BRANCH-UUID";
       const body = {
         optionsEnabled: enabled,
         groups,
         variants,
-        // branchId,
+        branchId: "3f393dae-bd42-40bb-b77e-5686180d2f25", // فرع MAIN
       };
-      const res = await fetch(
-        `/api/admin/products/${product.id}/options`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        }
-      );
+      const res = await fetch(`/api/admin/products/${product.id}/options`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
       const json = await res.json();
       if (!res.ok || json?.error) {
         throw new Error(json?.error || `PATCH failed with ${res.status}`);
       }
-      // رجّع التصحيحات للأب (لو تبغى ينعكس فورًا)
       onSaved({ optionsEnabled: enabled, options: groups, variants });
       onClose();
     } catch (e) {
-      // ممكن تضيف Toast هنا
       console.error(e);
       alert("تعذّر الحفظ. تحقّق من الاتصال والصلاحيات وفرع المخزون.");
     } finally {
@@ -231,12 +257,8 @@ export default function OptionsQuantityDialog({
             — <span className="text-zinc-800">{product.name}</span>
           </h3>
           <div className="flex items-center gap-2">
-            {loading && (
-              <span className="text-xs text-zinc-500">جاري التحميل…</span>
-            )}
-            {saving && (
-              <span className="text-xs text-teal-700">جاري الحفظ…</span>
-            )}
+            {loading && <span className="text-xs text-zinc-500">جاري التحميل…</span>}
+            {saving && <span className="text-xs text-teal-700">جاري الحفظ…</span>}
             <button
               className="rounded-xl border border-zinc-200/60 bg-white/80 px-3 py-1.5 text-sm hover:bg-zinc-50/80 transition-colors"
               onClick={onClose}
@@ -253,11 +275,7 @@ export default function OptionsQuantityDialog({
           </div>
 
           <div className="mb-5 flex items-center justify-between rounded-xl border border-zinc-200/70 bg-white/70 px-4 py-3 shadow-sm">
-            <span className="text-sm font-semibold text-zinc-800">
-              تفعيل خيارات المنتج
-            </span>
-
-            {/* Switch */}
+            <span className="text-sm font-semibold text-zinc-800">تفعيل خيارات المنتج</span>
             <label className="relative inline-flex cursor-pointer items-center select-none">
               <input
                 type="checkbox"
@@ -300,7 +318,10 @@ export default function OptionsQuantityDialog({
                     className="rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none placeholder:text-zinc-400 focus:ring-2 focus:ring-teal-500/40 transition"
                     placeholder="مسمى الخيار (مثل اللون، المقاس)"
                     value={g.name}
-                    onChange={(e) => patchGroup(g.id, { name: e.target.value })}
+                    onChange={(e) => {
+                      if (!enabled && e.target.value.trim()) setEnabled(true);
+                      patchGroup(g.id, { name: e.target.value });
+                    }}
                   />
 
                   <button
@@ -353,15 +374,9 @@ export default function OptionsQuantityDialog({
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/60">
                     <tr className="border-b border-zinc-200/70 text-zinc-600">
-                      <th className="px-3 py-2 text-start font-semibold">
-                        المتغير
-                      </th>
-                      <th className="px-3 py-2 text-start font-semibold">
-                        SKU
-                      </th>
-                      <th className="px-3 py-2 text-start font-semibold">
-                        الكمية
-                      </th>
+                      <th className="px-3 py-2 text-start font-semibold">المتغير</th>
+                      <th className="px-3 py-2 text-start font-semibold">SKU</th>
+                      <th className="px-3 py-2 text-start font-semibold">الكمية</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -370,9 +385,7 @@ export default function OptionsQuantityDialog({
                         .map((id, idx) => {
                           const gg = groups[idx];
                           const val = gg?.values.find((vv) => vv.id === id);
-                          return gg && val
-                            ? `${gg.name || "خيار"}: ${val.label}`
-                            : "";
+                          return gg && val ? `${gg.name || "خيار"}: ${val.label}` : "";
                         })
                         .filter(Boolean)
                         .join(" — ");
@@ -391,11 +404,7 @@ export default function OptionsQuantityDialog({
                               value={v.sku ?? ""}
                               onChange={(e) =>
                                 setVariants((arr) =>
-                                  arr.map((x) =>
-                                    x.id === v.id
-                                      ? { ...x, sku: e.target.value }
-                                      : x
-                                  )
+                                  arr.map((x) => (x.id === v.id ? { ...x, sku: e.target.value } : x))
                                 )
                               }
                             />
@@ -409,13 +418,7 @@ export default function OptionsQuantityDialog({
                                 setVariants((arr) =>
                                   arr.map((x) =>
                                     x.id === v.id
-                                      ? {
-                                          ...x,
-                                          qty:
-                                            e.target.value === ""
-                                              ? 0
-                                              : +e.target.value,
-                                        }
+                                      ? { ...x, qty: e.target.value === "" ? 0 : +e.target.value }
                                       : x
                                   )
                                 )
@@ -481,7 +484,15 @@ function ValuesEditor({
             className="rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none placeholder:text-zinc-400 focus:ring-2 focus:ring-teal-500/40 transition"
             placeholder="القيمة"
             value={v.label}
-            onChange={(e) => onPatchValue(v.id, { label: e.target.value })}
+            onChange={(e) => {
+              if (e.target.value.trim()) {
+                // فعّل تلقائيًا
+                // eslint-disable-next-line no-undef
+                // @ts-ignore
+                // enabled state موجود بالأب؛ هذا مجرد ضمان إذا تغيّر التنفيذ
+              }
+              onPatchValue(v.id, { label: e.target.value });
+            }}
           />
 
           {group.type === "color" ? (
@@ -492,9 +503,7 @@ function ValuesEditor({
               onChange={(e) => onPatchValue(v.id, { colorHex: e.target.value })}
             />
           ) : (
-            <div className="hidden sm:block text-center text-xs text-zinc-400">
-              —
-            </div>
+            <div className="hidden sm:block text-center text-xs text-zinc-400">—</div>
           )}
 
           {group.type === "image" ? (
@@ -505,9 +514,7 @@ function ValuesEditor({
               onChange={(e) => onPatchValue(v.id, { imageUrl: e.target.value })}
             />
           ) : (
-            <div className="hidden sm:block text-center text-xs text-zinc-400">
-              —
-            </div>
+            <div className="hidden sm:block text-center text-xs text-zinc-400">—</div>
           )}
 
           <button
