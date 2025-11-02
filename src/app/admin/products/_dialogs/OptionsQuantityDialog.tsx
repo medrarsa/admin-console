@@ -49,8 +49,8 @@ export default function OptionsQuantityDialog({
         let nextVariants: VariantRow[] = [];
         let nextEnabled = true;
 
-        // صيغة سلة: {status, success, data:[...]}
         if (json?.data && Array.isArray(json.data)) {
+          // صيغة سلة: data = قائمة خيارات
           const parsed: OptionGroup[] = json.data.map((o: any) => ({
             id: o.id,
             type: (o.display_type ?? "text") as OptionGroup["type"],
@@ -81,12 +81,11 @@ export default function OptionsQuantityDialog({
             nextGroups = parsed;
             nextEnabled = parsed.some((g) => g.values.length > 0);
           }
-        }
-        // صيغة بديلة: {optionsEnabled, groups, variants}
-        else if (
+        } else if (
           typeof json?.optionsEnabled !== "undefined" &&
           Array.isArray(json?.groups)
         ) {
+          // صيغة بديلة: {optionsEnabled, groups, variants}
           nextEnabled = !!json.optionsEnabled;
           nextGroups = json.groups as OptionGroup[];
           nextVariants = Array.isArray(json?.variants)
@@ -282,20 +281,43 @@ export default function OptionsQuantityDialog({
         variants,
         branchId: "3f393dae-bd42-40bb-b77e-5686180d2f25", // فرع MAIN
       };
+
       const res = await fetch(`/api/admin/products/${product.id}/options`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const json = await res.json();
-      if (!res.ok || json?.error) {
-        throw new Error(json?.error || `PATCH failed with ${res.status}`);
+
+      // حاول قراءة JSON، وإن فشل خذ النص الخام
+      let rawText = "";
+      let json: any = null;
+      try {
+        json = await res.clone().json();
+      } catch {
+        try {
+          rawText = await res.text();
+        } catch {
+          rawText = "<no body>";
+        }
       }
+
+      if (!res.ok || json?.error || json?.success === false) {
+        console.error("PATCH /api/admin/products/[id]/options failed →", {
+          status: res.status,
+          json,
+          rawText,
+        });
+        const msg =
+          json?.detail || json?.error || rawText || `PATCH failed with ${res.status}`;
+        alert(`تعذّر الحفظ:\n${msg}`);
+        return;
+      }
+
       onSaved({ optionsEnabled: enabled, options: groups, variants });
       onClose();
-    } catch (e) {
-      console.error(e);
-      alert("تعذّر الحفظ. تحقّق من الاتصال والصلاحيات وفرع المخزون.");
+    } catch (e: any) {
+      console.error("PATCH /options exception →", e);
+      alert(`تعذّر الحفظ (استثناء):\n${e?.message || e}`);
     } finally {
       setSaving(false);
     }
@@ -466,7 +488,6 @@ export default function OptionsQuantityDialog({
                   </thead>
                   <tbody>
                     {variants.map((v, i) => {
-                      // نبني وصف المتغير بافتراض ترتيب القيم يطابق ترتيب المجموعات
                       const label = v.optionValueIds
                         .map((id, idx) => {
                           const gg = groups[idx];
