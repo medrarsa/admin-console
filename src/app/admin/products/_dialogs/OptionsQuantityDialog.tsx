@@ -13,6 +13,9 @@ export default function OptionsQuantityDialog({
   onClose: () => void;
   onSaved: (patch: Partial<Product>) => void;
 }) {
+  const [loading, setLoading] = React.useState(true);
+  const [saving, setSaving] = React.useState(false);
+
   const [enabled, setEnabled] = React.useState(!!product.optionsEnabled);
   const [groups, setGroups] = React.useState<OptionGroup[]>(
     product.options?.length
@@ -22,6 +25,78 @@ export default function OptionsQuantityDialog({
   const [variants, setVariants] = React.useState<VariantRow[]>(
     product.variants ?? []
   );
+
+  // ---------- عند فتح المودال: جلب البيانات من الراوت ----------
+  React.useEffect(() => {
+    let alive = true;
+    async function fetchOptions() {
+      try {
+        setLoading(true);
+        const res = await fetch(
+          `/api/admin/products/${product.id}/options`,
+          { method: "GET" }
+        );
+        if (!res.ok) throw new Error(`GET failed with ${res.status}`);
+        const json = await res.json();
+        // GET لدينا يرجع: { status, success, data } أو { optionsEnabled, groups, variants }
+        // ندعمهما كلاهما:
+        let nextGroups: OptionGroup[] = groups;
+        let nextVariants: VariantRow[] = variants;
+        let nextEnabled = enabled;
+
+        if (json?.data && Array.isArray(json.data)) {
+          // صيغة: قائمة خيارات (سلة-ستايل) بدون SKUs
+          // نحوّلها إلى شكل المودال (OptionGroup[])
+          const parsed: OptionGroup[] = json.data.map((o: any) => ({
+            id: o.id,
+            type: (o.display_type ?? "text") as OptionGroup["type"],
+            name: o.name ?? "",
+            values: Array.isArray(o.values)
+              ? o.values.map((v: any) => ({
+                  id: v.id,
+                  label: v.name ?? "",
+                  colorHex:
+                    (o.display_type === "color" ? v.display_value : undefined) ??
+                    undefined,
+                  imageUrl:
+                    (o.display_type === "image" ? v.image_url : undefined) ??
+                    undefined,
+                }))
+              : [],
+          }));
+          nextGroups = parsed.length ? parsed : nextGroups;
+          // المتغيرات تُدار عبر PATCH، فالـ GET هذا غالبًا لا يعيدها → نخليها كما هي
+          // ونستنتج enabled:
+          nextEnabled =
+            parsed.length > 0 && parsed.some((g) => g.values.length > 0);
+        } else if (
+          typeof json?.optionsEnabled !== "undefined" &&
+          Array.isArray(json?.groups) &&
+          Array.isArray(json?.variants)
+        ) {
+          // صيغة: { optionsEnabled, groups, variants }
+          nextEnabled = !!json.optionsEnabled;
+          nextGroups = json.groups;
+          nextVariants = json.variants;
+        }
+
+        if (alive) {
+          setEnabled(nextEnabled);
+          setGroups(nextGroups.length ? nextGroups : [{ id: crypto.randomUUID(), type: "text", name: "", values: [] }]);
+          setVariants(nextVariants ?? []);
+        }
+      } catch {
+        // تجاهل الخطأ — نخلي الحالة الحالية
+      } finally {
+        if (alive) setLoading(false);
+      }
+    }
+    fetchOptions();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [product.id]);
 
   React.useEffect(() => {
     const onEsc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -109,9 +184,39 @@ export default function OptionsQuantityDialog({
     ),
   ]);
 
-  function saveAll() {
-    onSaved({ optionsEnabled: enabled, options: groups, variants });
-    onClose();
+  async function saveAll() {
+    setSaving(true);
+    try {
+      // لو تبغى تحديد فرع بعينه للكمية: مرّر branchId هنا
+      // const branchId = "YOUR-BRANCH-UUID";
+      const body = {
+        optionsEnabled: enabled,
+        groups,
+        variants,
+        // branchId,
+      };
+      const res = await fetch(
+        `/api/admin/products/${product.id}/options`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }
+      );
+      const json = await res.json();
+      if (!res.ok || json?.error) {
+        throw new Error(json?.error || `PATCH failed with ${res.status}`);
+      }
+      // رجّع التصحيحات للأب (لو تبغى ينعكس فورًا)
+      onSaved({ optionsEnabled: enabled, options: groups, variants });
+      onClose();
+    } catch (e) {
+      // ممكن تضيف Toast هنا
+      console.error(e);
+      alert("تعذّر الحفظ. تحقّق من الاتصال والصلاحيات وفرع المخزون.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -125,12 +230,20 @@ export default function OptionsQuantityDialog({
             </span>{" "}
             — <span className="text-zinc-800">{product.name}</span>
           </h3>
-          <button
-            className="rounded-xl border border-zinc-200/60 bg-white/80 px-3 py-1.5 text-sm hover:bg-zinc-50/80 transition-colors"
-            onClick={onClose}
-          >
-            إغلاق
-          </button>
+          <div className="flex items-center gap-2">
+            {loading && (
+              <span className="text-xs text-zinc-500">جاري التحميل…</span>
+            )}
+            {saving && (
+              <span className="text-xs text-teal-700">جاري الحفظ…</span>
+            )}
+            <button
+              className="rounded-xl border border-zinc-200/60 bg-white/80 px-3 py-1.5 text-sm hover:bg-zinc-50/80 transition-colors"
+              onClick={onClose}
+            >
+              إغلاق
+            </button>
+          </div>
         </div>
 
         {/* Body */}
@@ -144,7 +257,7 @@ export default function OptionsQuantityDialog({
               تفعيل خيارات المنتج
             </span>
 
-            {/* Gen-Z Switch (بدون تغيير المنطق) */}
+            {/* Switch */}
             <label className="relative inline-flex cursor-pointer items-center select-none">
               <input
                 type="checkbox"
@@ -328,10 +441,11 @@ export default function OptionsQuantityDialog({
             </button>
             <button
               onClick={saveAll}
-              className="rounded-xl bg-gradient-to-l from-teal-600 to-sky-600 px-6 py-2 text-sm font-semibold text-white shadow hover:brightness-[1.05] active:brightness-95 transition"
+              disabled={saving}
+              className="rounded-xl bg-gradient-to-l from-teal-600 to-sky-600 px-6 py-2 text-sm font-semibold text-white shadow hover:brightness-[1.05] active:brightness-95 transition disabled:opacity-60"
               type="button"
             >
-              حفظ
+              {saving ? "جارٍ الحفظ..." : "حفظ"}
             </button>
           </div>
         </div>

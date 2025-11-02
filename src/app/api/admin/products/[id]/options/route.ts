@@ -4,47 +4,73 @@ import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServerClient } from "@/lib/supabase/server";
 
-// ===== Schemas =====
-const ValueSchema = z.object({
+/* =========================
+   Zod Schemas
+   ========================= */
+
+// سلة: إنشاء خيار + قيم
+const SallaValueInput = z.object({
+  name: z.string().min(1),
+  price: z.number().optional().default(0),       // extra_price لكل قيمة
+  display_value: z.string().optional().default(""), // لو color: "#000000" — لو text: ممكن فاضي — لو image: id/نص
+  image_url: z.string().url().optional(),        // بديل عملي خارج سلة
+});
+
+const SallaOptionInput = z.object({
+  name: z.string().min(1),
+  type: z.enum([
+    "radio", "textarea", "number", "checkbox", "image",
+    "date", "time", "datetime", "map", "file", "color_picker", "splitter",
+  ]),
+  display_type: z.enum(["text", "image", "color"]).optional().default("text"),
+  visibility: z.enum(["always", "on_condition"]).optional().default("always"),
+  visibility_condition_type: z.enum(["=", "!=", ">", "<"]).optional(),
+  visibility_condition_option: z.string().optional(),
+  visibility_condition_value: z.string().optional(),
+  sort: z.number().int().optional().default(0),
+  advance: z.boolean().optional().default(true),
+  associated_with_order_time: z.boolean().optional().default(false),
+  not_same_day_order: z.boolean().optional().default(false),
+  values: z.array(SallaValueInput).optional().default([]),
+});
+
+// مودالك الحالي: حفظ المتغيرات + الكميات
+const ModalValue = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
   colorHex: z.string().optional(),
   imageUrl: z.string().url().optional(),
 });
 
-const GroupSchema = z.object({
+const ModalGroup = z.object({
   id: z.string().min(1),
   type: z.enum(["text", "color", "image"]),
   name: z.string().min(1),
-  values: z.array(ValueSchema),
+  values: z.array(ModalValue),
 });
 
-const VariantSchema = z.object({
+const ModalVariant = z.object({
   id: z.string().min(1),
   optionValueIds: z.array(z.string().min(1)).nonempty(),
   sku: z.string().optional().default(""),
   qty: z.number().int().min(0).default(0),
 });
 
-const SaveSchema = z.object({
+const PatchBody = z.object({
   optionsEnabled: z.boolean().optional(),
-  groups: z.array(GroupSchema),
-  variants: z.array(VariantSchema),
+  groups: z.array(ModalGroup),
+  variants: z.array(ModalVariant),
   branchId: z.string().uuid().optional(),
 });
 
-// ===== Helpers =====
-function displayTypeOf(t: "text" | "color" | "image") {
+/* =========================
+   Helpers
+   ========================= */
+
+function normalizeDisplayType(t: "text" | "image" | "color") {
   return t;
 }
-function valueDisplayOf(
-  groupType: "text" | "color" | "image",
-  val: z.infer<typeof ValueSchema>
-) {
-  if (groupType === "color") return val.colorHex ?? null;
-  if (groupType === "image") return val.imageUrl ?? null;
-  return null;
-}
+
 async function getOrFirstBranchId(
   supabase: SupabaseClient,
   preferred?: string | null
@@ -56,137 +82,192 @@ async function getOrFirstBranchId(
     .order("created_at", { ascending: true })
     .limit(1);
   if (error) throw error;
-  if (!data?.length)
-    throw new Error("No branches found. Create a branch or pass branchId.");
+  if (!data?.length) throw new Error("No branches found. Create one or pass branchId.");
   return data[0].id as string;
 }
-function buildVariantLabel(
-  orderGroups: Array<{ name: string; values: Array<{ id: string; label: string }> }>,
-  ids: string[]
-) {
-  const parts: string[] = [];
-  ids.forEach((valId, idx) => {
-    const g = orderGroups[idx];
-    if (!g) return;
-    const v = g.values.find((x) => x.id === valId);
-    if (!v) return;
-    parts.push(`${g.name || "خيار"}: ${v.label}`);
-  });
-  return parts.join(" — ");
-}
 
-// ===== GET =====
+/* =========================
+   GET: رجّع كل خيارات المنتج بصيغة قريبة من سلة
+   ========================= */
+
 export async function GET(
   _req: NextRequest,
   ctx: { params: Promise<{ id: string }> }
 ) {
   const { id: productId } = await ctx.params;
   if (!productId)
-    return NextResponse.json({ error: "Missing product id" }, { status: 400 });
+    return NextResponse.json({ status: 400, success: false, message: "Missing product id" }, { status: 400 });
 
   const supabase = await createServerClient();
 
-  const { data: optGroups, error: gErr } = await supabase
+  // خيارات المنتج
+  const { data: options, error: optErr } = await supabase
     .from("product_options")
-    .select("id, name, display_type, type, sort_order")
+    .select("id, name, display_type, type, sort_order, visibility, associated_with_order_time, not_same_day_order, description")
     .eq("product_id", productId)
     .order("sort_order", { ascending: true });
-  if (gErr) return NextResponse.json({ error: gErr.message }, { status: 500 });
 
-  const groupIds = (optGroups ?? []).map((g) => g.id);
-  let valuesByGroup = new Map<string, any[]>();
-  if (groupIds.length) {
-    const { data: vals, error: vErr } = await supabase
+  if (optErr) return NextResponse.json({ status: 500, success: false, message: optErr.message }, { status: 500 });
+
+  // قيم كل خيار
+  const optionIds = (options ?? []).map(o => o.id);
+  let valuesByOption = new Map<string, any[]>();
+  if (optionIds.length) {
+    const { data: vals, error: valErr } = await supabase
       .from("product_option_values")
-      .select("id, option_id, name, display_value, sort_order")
-      .in("option_id", groupIds)
+      .select("id, option_id, name, display_value, image_url, extra_price, extra_price_currency, sort_order")
+      .in("option_id", optionIds)
       .order("sort_order", { ascending: true });
-    if (vErr) return NextResponse.json({ error: vErr.message }, { status: 500 });
+    if (valErr) return NextResponse.json({ status: 500, success: false, message: valErr.message }, { status: 500 });
 
-    valuesByGroup = groupIds.reduce((m, gid) => {
-      const g = optGroups?.find((gg) => gg.id === gid);
+    valuesByOption = optionIds.reduce((m, oid) => {
       m.set(
-        gid,
+        oid,
         (vals ?? [])
-          .filter((v) => v.option_id === gid)
-          .map((v) => ({
+          .filter(v => v.option_id === oid)
+          .map(v => ({
             id: v.id,
-            label: v.name,
-            colorHex: g?.display_type === "color" ? v.display_value : undefined,
-            imageUrl: g?.display_type === "image" ? v.display_value : undefined,
+            name: v.name,
+            price: { amount: v.extra_price ?? 0, currency: v.extra_price_currency ?? "SAR" },
+            display_value: v.display_value ?? "",
+            option_id: v.option_id,
+            image_url: v.image_url ?? null,
+            hashed_display_value: "", // غير مستخدم لدينا حاليًا
           }))
       );
       return m;
     }, new Map<string, any[]>());
   }
 
-  const { data: vars, error: varErr } = await supabase
-    .from("product_variants")
-    .select("id, sku, status, created_at")
-    .eq("product_id", productId)
-    .order("created_at", { ascending: true });
-  if (varErr) return NextResponse.json({ error: varErr.message }, { status: 500 });
-
-  const variantIds = (vars ?? []).map((v) => v.id);
-  let byVariantVals = new Map<string, string[]>();
-  if (variantIds.length) {
-    const { data: links, error: lErr } = await supabase
-      .from("variant_option_values")
-      .select("variant_id, option_value_id")
-      .in("variant_id", variantIds);
-    if (lErr) return NextResponse.json({ error: lErr.message }, { status: 500 });
-    links?.forEach((l) => {
-      const arr = byVariantVals.get(l.variant_id) ?? [];
-      arr.push(l.option_value_id);
-      byVariantVals.set(l.variant_id, arr);
-    });
-  }
-
-  let qtyByVariant = new Map<string, number>();
-  if (variantIds.length) {
-    const { data: inv } = await supabase
-      .from("variant_inventory")
-      .select("variant_id, qty_on_hand");
-    inv?.forEach((r) => {
-      const prev = qtyByVariant.get(r.variant_id) ?? 0;
-      qtyByVariant.set(r.variant_id, prev + (r.qty_on_hand ?? 0));
-    });
-  }
-
-  const groups = (optGroups ?? []).map((g) => ({
-    id: g.id,
-    type: (g.display_type as "text" | "color" | "image") ?? "text",
-    name: g.name,
-    values: valuesByGroup.get(g.id) ?? [],
+  const data = (options ?? []).map(o => ({
+    id: o.id,
+    name: o.name,
+    description: o.description ?? null,
+    type: o.type, // نخزّنه كـ radio/checkbox (باقي الأنواع نعكسها في POST)
+    required: false,
+    associated_with_order_time: o.associated_with_order_time ? 1 : 0,
+    sort: o.sort_order ?? 0,
+    display_type: o.display_type as "text" | "image" | "color",
+    visibility: o.visibility ?? "always",
+    values: valuesByOption.get(o.id) ?? [],
+    skus: [], // المتغيرات تدار من PATCH/مودالك — نتركها هنا فاضية
   }));
 
-  const groupsForLabel = groups.map((g) => ({
-    name: g.name,
-    values: g.values.map((v) => ({ id: v.id, label: v.label })),
-  }));
-
-  const variants = (vars ?? []).map((v) => {
-    const valueIds = byVariantVals.get(v.id) ?? [];
-    const label = buildVariantLabel(groupsForLabel, valueIds);
-    return {
-      id: v.id,
-      optionValueIds: valueIds,
-      sku: v.sku ?? "",
-      qty: qtyByVariant.get(v.id) ?? 0,
-      label,
-    };
-    });
-
-  const enabled =
-    groups.length > 0 &&
-    groups.some((g) => g.values.length > 0) &&
-    variants.length > 0;
-
-  return NextResponse.json({ optionsEnabled: enabled, groups, variants });
+  return NextResponse.json({ status: 200, success: true, data });
 }
 
-// ===== POST / PATCH =====
+/* =========================
+   POST (سلة): إنشاء خيار + قيم
+   ========================= */
+
 export async function POST(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
+  const { id: productId } = await ctx.params;
+  if (!productId)
+    return NextResponse.json({ status: 400, success: false, message: "Missing product id" }, { status: 400 });
+
+  const json = await req.json();
+  const parsed = SallaOptionInput.safeParse(json);
+  if (!parsed.success)
+    return NextResponse.json({ status: 400, success: false, message: "Invalid payload", errors: parsed.error.flatten() }, { status: 400 });
+
+  const payload = parsed.data;
+  const supabase = await createServerClient();
+
+  if (payload.visibility === "on_condition") {
+    if (!payload.visibility_condition_type || !payload.visibility_condition_option || !payload.visibility_condition_value) {
+      return NextResponse.json({
+        status: 400,
+        success: false,
+        message: "visibility_condition_* required when visibility=on_condition",
+      }, { status: 400 });
+    }
+  }
+
+  // خزن كـ radio/checkbox (لتوافق CHECK). الأنواع الأخرى نعيدها في الرد فقط.
+  const dbType = payload.type === "checkbox" ? "checkbox" : "radio";
+
+  // 1) إنشاء الخيار
+  const { data: opt, error: optErr } = await supabase
+    .from("product_options")
+    .insert({
+      product_id: productId,
+      name: payload.name,
+      type: dbType,
+      display_type: normalizeDisplayType(payload.display_type),
+      sort_order: payload.sort ?? 0,
+      visibility: payload.visibility,
+      visibility_condition_type: payload.visibility_condition_type ?? null,
+      visibility_condition_option: payload.visibility_condition_option ?? null,
+      visibility_condition_value: payload.visibility_condition_value ?? null,
+      associated_with_order_time: payload.associated_with_order_time ?? false,
+      not_same_day_order: payload.not_same_day_order ?? false,
+      required: false,
+    })
+    .select("id, name, type, display_type, sort_order, visibility, associated_with_order_time, not_same_day_order")
+    .single();
+
+  if (optErr) return NextResponse.json({ status: 500, success: false, message: optErr.message }, { status: 500 });
+
+  // 2) إنشاء القيم
+  let valuesOut: any[] = [];
+  if (payload.values?.length) {
+    const rows = payload.values.map((v, idx) => ({
+      option_id: opt.id,
+      name: v.name,
+      display_value: v.display_value || null, // color hex أو نص
+      image_url: v.image_url || null,
+      extra_price: v.price ?? 0,
+      extra_price_currency: "SAR",
+      sort_order: idx,
+      is_default: false,
+    }));
+    const { data: vals, error: valErr } = await supabase
+      .from("product_option_values")
+      .insert(rows)
+      .select("id, name, display_value, image_url, extra_price, extra_price_currency, option_id, sort_order");
+
+    if (valErr) return NextResponse.json({ status: 500, success: false, message: valErr.message }, { status: 500 });
+
+    valuesOut = (vals ?? []).map((iv) => ({
+      id: iv.id,
+      name: iv.name,
+      price: { amount: iv.extra_price ?? 0, currency: iv.extra_price_currency ?? "SAR" },
+      display_value: iv.display_value ?? "",
+      option_id: iv.option_id,
+      image_url: iv.image_url ?? null,
+      hashed_display_value: "",
+    }));
+  }
+
+  // 3) الرد
+  return NextResponse.json({
+    status: 200,
+    success: true,
+    data: {
+      id: opt.id,
+      name: opt.name,
+      description: null,
+      type: payload.type, // نعيد الأصلي الذي أرسلته
+      required: false,
+      associated_with_order_time: opt.associated_with_order_time ? 1 : 0,
+      sort: opt.sort_order ?? 0,
+      display_type: opt.display_type,
+      visibility: opt.visibility,
+      values: valuesOut,
+      skus: [],
+    },
+  });
+}
+
+/* =========================
+   PATCH (مودال المتغيرات والكميات)
+   يكتب: product_variants + variant_option_values + variant_inventory
+   ========================= */
+
+export async function PATCH(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> }
 ) {
@@ -195,113 +276,101 @@ export async function POST(
     return NextResponse.json({ error: "Missing product id" }, { status: 400 });
 
   const json = await req.json();
-  const parsed = SaveSchema.safeParse(json);
+  const parsed = PatchBody.safeParse(json);
   if (!parsed.success)
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
 
-  const { optionsEnabled, groups, variants, branchId: preferredBranch } =
-    parsed.data;
-
+  const { optionsEnabled, groups, variants, branchId: preferredBranch } = parsed.data;
   const supabase = await createServerClient();
   const branchId = await getOrFirstBranchId(supabase, preferredBranch ?? null);
 
-  // === product_options
+  // 1) نضمن أن كل مجموعة موجودة (id من الواجهة) — upsert مبسط بالاسم/النوع
   const optionIdMap = new Map<string, string>();
-  const { data: existingOptions, error: eoErr } = await supabase
+  const { data: existingOptions } = await supabase
     .from("product_options")
-    .select("id, name, display_type, sort_order")
+    .select("id, name")
     .eq("product_id", productId);
-  if (eoErr) return NextResponse.json({ error: eoErr.message }, { status: 500 });
 
   for (let idx = 0; idx < groups.length; idx++) {
     const g = groups[idx];
-    const display_type = displayTypeOf(g.type);
-    let dbId = existingOptions?.find((o) => o.id === g.id)?.id;
-
+    let dbId = existingOptions?.find(o => o.id === g.id)?.id;
     if (!dbId) {
-      const { data: ins, error: insErr } = await supabase
+      const { data: ins, error } = await supabase
         .from("product_options")
         .insert({
           id: g.id,
           product_id: productId,
           name: g.name,
-          display_type,
+          display_type: g.type,
           type: "radio",
           sort_order: idx,
         })
         .select("id")
         .single();
-      if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
       dbId = ins.id;
     } else {
-      const { error: updErr } = await supabase
+      const { error } = await supabase
         .from("product_options")
-        .update({
-          name: g.name,
-          display_type,
-          type: "radio",
-          sort_order: idx,
-        })
+        .update({ name: g.name, display_type: g.type, sort_order: idx })
         .eq("id", dbId);
-      if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     }
-    optionIdMap.set(g.id, dbId);
+    optionIdMap.set(g.id, dbId!);
   }
 
-  // === product_option_values
+  // 2) upsert لقيم الخيارات
   const valueIdMap = new Map<string, string>();
-  const { data: exVals, error: exValsErr } = await supabase
+  const { data: exVals } = await supabase
     .from("product_option_values")
-    .select("id, option_id, name, display_value, sort_order");
-  if (exValsErr) return NextResponse.json({ error: exValsErr.message }, { status: 500 });
-  const existingValues = exVals ?? [];
-
+    .select("id, option_id");
   for (const g of groups) {
     const dbOptionId = optionIdMap.get(g.id)!;
     for (let vidx = 0; vidx < g.values.length; vidx++) {
       const v = g.values[vidx];
-      const display_value = valueDisplayOf(g.type, v);
-      let dbValId = existingValues.find(
-        (ev) => ev.id === v.id && ev.option_id === dbOptionId
-      )?.id;
-
+      let dbValId = exVals?.find(ev => ev.id === v.id && ev.option_id === dbOptionId)?.id;
+      const display_value = g.type === "color" ? (v.colorHex ?? null)
+                        : g.type === "image" ? (v.imageUrl ?? null)
+                        : null;
       if (!dbValId) {
-        const { data: insV, error: insVErr } = await supabase
+        const { data: insV, error } = await supabase
           .from("product_option_values")
           .insert({
             id: v.id,
             option_id: dbOptionId,
             name: v.label,
             display_value,
+            image_url: g.type === "image" ? v.imageUrl ?? null : null,
             sort_order: vidx,
             is_default: false,
             extra_price: 0,
+            extra_price_currency: "SAR",
           })
           .select("id")
           .single();
-        if (insVErr) return NextResponse.json({ error: insVErr.message }, { status: 500 });
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
         dbValId = insV.id;
       } else {
-        const { error: updVErr } = await supabase
+        const { error } = await supabase
           .from("product_option_values")
           .update({
             name: v.label,
             display_value,
+            image_url: g.type === "image" ? v.imageUrl ?? null : null,
             sort_order: vidx,
           })
           .eq("id", dbValId);
-        if (updVErr) return NextResponse.json({ error: updVErr.message }, { status: 500 });
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
       }
-      valueIdMap.set(v.id, dbValId);
+      valueIdMap.set(v.id, dbValId!);
     }
   }
 
-  // === product_variants + links + inventory
-  const { data: existingVariants, error: evErr } = await supabase
+  // 3) upsert variants + links + inventory
+  const { data: existingVariants } = await supabase
     .from("product_variants")
     .select("id")
     .eq("product_id", productId);
-  if (evErr) return NextResponse.json({ error: evErr.message }, { status: 500 });
 
   async function resetVariantLinks(variantId: string) {
     const { error } = await supabase
@@ -311,77 +380,61 @@ export async function POST(
     if (error) throw error;
   }
   async function upsertInventory(variantId: string, qty: number) {
-    const { data: inv, error: invErr } = await supabase
+    const { data: inv, error } = await supabase
       .from("variant_inventory")
       .select("id, qty_on_hand")
       .eq("variant_id", variantId)
       .eq("branch_id", branchId)
       .maybeSingle();
-    if (invErr) throw invErr;
-
+    if (error) throw error;
     if (!inv) {
-      const { error: insInvErr } = await supabase.from("variant_inventory").insert({
-        variant_id: variantId,
-        branch_id: branchId,
-        qty_on_hand: qty ?? 0,
-        qty_reserved: 0,
-      });
-      if (insInvErr) throw insInvErr;
+      const { error: ins } = await supabase
+        .from("variant_inventory")
+        .insert({ variant_id: variantId, branch_id: branchId, qty_on_hand: qty ?? 0, qty_reserved: 0 });
+      if (ins) throw ins;
     } else {
-      const { error: updInvErr } = await supabase
+      const { error: upd } = await supabase
         .from("variant_inventory")
         .update({ qty_on_hand: qty ?? 0 })
         .eq("id", inv.id);
-      if (updInvErr) throw updInvErr;
+      if (upd) throw upd;
     }
   }
 
   for (const v of variants) {
-    let dbVarId = existingVariants?.find((ev) => ev.id === v.id)?.id;
+    let dbVarId = existingVariants?.find(ev => ev.id === v.id)?.id;
     if (!dbVarId) {
-      const { data: insVar, error: insVarErr } = await supabase
+      const { data: insVar, error } = await supabase
         .from("product_variants")
-        .insert({
-          id: v.id,
-          product_id: productId,
-          sku: v.sku ?? "",
-          status: "active",
-        })
+        .insert({ id: v.id, product_id: productId, sku: v.sku ?? "", status: "active" })
         .select("id")
         .single();
-      if (insVarErr) return NextResponse.json({ error: insVarErr.message }, { status: 500 });
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
       dbVarId = insVar.id;
     } else {
-      const { error: updVarErr } = await supabase
+      const { error } = await supabase
         .from("product_variants")
         .update({ sku: v.sku ?? "" })
         .eq("id", dbVarId);
-      if (updVarErr) return NextResponse.json({ error: updVarErr.message }, { status: 500 });
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    await resetVariantLinks(dbVarId);
-
+    await resetVariantLinks(dbVarId!);
     for (const uiValId of v.optionValueIds) {
       const actualValId = valueIdMap.get(uiValId);
       if (!actualValId) {
-        return NextResponse.json(
-          { error: `Option value not found mapping for ${uiValId}` },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: `Option value not found mapping for ${uiValId}` }, { status: 400 });
       }
-      const { error: linkErr } = await supabase
+      const { error } = await supabase
         .from("variant_option_values")
-        .insert({ variant_id: dbVarId, option_value_id: actualValId });
-      if (linkErr) return NextResponse.json({ error: linkErr.message }, { status: 500 });
+        .insert({ variant_id: dbVarId!, option_value_id: actualValId });
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
     try {
-      await upsertInventory(dbVarId, v.qty ?? 0);
+      await upsertInventory(dbVarId!, v.qty ?? 0);
     } catch (e: any) {
-      return NextResponse.json(
-        { error: e?.message || "Inventory upsert failed" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: e?.message || "Inventory upsert failed" }, { status: 500 });
     }
   }
 
@@ -391,15 +444,9 @@ export async function POST(
         groups.some((g) => g.values.length > 0) &&
         variants.length > 0)) === true;
 
-  // (اختياري) حفظ عمود في products:
-  // await supabase.from("products").update({ options_enabled: enabled }).eq("id", productId);
-
   return NextResponse.json({
     ok: true,
     optionsEnabled: enabled,
-    message: "Product options & variants saved successfully.",
+    message: "Options, variants & inventory saved.",
   });
 }
-
-// اجعل PATCH يوجّه لنفس منطق POST
-export const PATCH = POST;
