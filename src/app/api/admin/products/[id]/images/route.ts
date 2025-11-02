@@ -19,19 +19,19 @@ const ok = (data: any, status = 200) => NextResponse.json({ success: true, statu
 const fail = (error: string, status = 400, meta?: any) =>
   NextResponse.json({ success: false, status, error, meta }, { status });
 
-/** GET: قائمة صور المنتج */
+/** GET: قائمة صور المنتج — نقرأ بـ Service-Role لتجاوز RLS */
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
-    const supa = await createServerSupabase();
+    const adminRead = createServiceRoleSupabase(); // ✅ مهم للعرض
     const { id: product_id } = await ctx.params;
 
-    const { data, error } = await supa
+    const { data, error } = await adminRead
       .from("product_images")
       .select("id,url,alt,is_primary,sort_order,type,video_url,three_d_image_url")
       .eq("product_id", product_id)
       .order("sort_order", { ascending: true });
-    if (error) return fail(error.message, 500, { where: "select/product_images" });
 
+    if (error) return fail(error.message, 500, { where: "select/product_images" });
     return ok(data ?? []);
   } catch (e: any) {
     return fail(e?.message || "fetch images failed", 500);
@@ -114,8 +114,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     }
 
     if (!hasPrimary && inserted && inserted.length) {
-      // جرّب تعيين أول صورة من المدخلات كأساسية.
-      // إن سبق مسار آخر وعيّن أساسية، هذا التحديث لن يسبب duplicate لأننا لا ندخل صفًا جديدًا.
       const firstId = inserted[0].id as string;
       await admin.from("product_images").update({ is_primary: true }).eq("id", firstId);
     }
@@ -135,7 +133,6 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     const body = (await req.json()) as { primaryId?: string; order?: string[] };
 
     if (body.primaryId) {
-      // امسح الأساسية الحالية ثم عيّن الجديدة—في عمليتين منفصلتين لتقليل احتمالات تضارب القيد
       await admin.from("product_images").update({ is_primary: false }).eq("product_id", product_id);
       await admin.from("product_images").update({ is_primary: true }).eq("id", body.primaryId);
     }
