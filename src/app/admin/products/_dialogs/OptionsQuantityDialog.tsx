@@ -328,10 +328,14 @@ export default function OptionsQuantityDialog({
 
     setSaving(true);
     try {
-      // 👇 هوت-فيكس: نرسل groups كسلسلة JSON (تدعم الراوت القديم والجديد)
+      // هوت-فيكس: نرسل groups كسلسلة JSON مؤكّدة وغير فارغة
+      const groupsStr = JSON.stringify(sanitized ?? []);
+      const safeGroupsStr =
+        groupsStr && groupsStr.trim().length > 0 ? groupsStr : "[]";
+
       const body = {
         optionsEnabled: enabled,
-        groups: JSON.stringify(sanitized),
+        groups: safeGroupsStr, // 👈 الراوت القديم يطلب string min(1)
         variants,
         branchId: "3f393dae-bd42-40bb-b77e-5686180d2f25",
       };
