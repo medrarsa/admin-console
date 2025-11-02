@@ -41,7 +41,7 @@ export default function OptionsQuantityDialog({
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
 
-  // بناء المتغيرات: بدون دمج افتراضيًا
+  // بناء المتغيرات: بدون دمج افتراضيًا (سلوك سلة)
   const [combineOptions, setCombineOptions] = React.useState(false);
 
   const [enabled, setEnabled] = React.useState(!!product.optionsEnabled);
@@ -272,29 +272,24 @@ export default function OptionsQuantityDialog({
 
   /* ------------- Sanitize & Save ------------- */
 
-  // اجعل أي مجموعة فيها قيم واسمها فاضي = اسم افتراضي
   function sanitizeGroupsForSave(src: OptionGroup[]): OptionGroup[] {
     const DEFAULT_NAMES = ["مقاسات", "خيار", "خيارات"];
-    return (
-      src
-        .map((g, i) => {
-          const hasValues = (g.values ?? []).some((v) => v.label?.trim());
-          let name = (g.name ?? "").trim();
-          if (hasValues && name.length === 0) {
-            name = DEFAULT_NAMES[i] ?? "خيار";
-          }
-          return { ...g, name };
-        })
-        // احذف المجموعات الفارغة تمامًا (لا اسم ولا قيم)
-        .filter(
-          (g) =>
-            (g.name?.trim()?.length ?? 0) > 0 ||
-            (g.values ?? []).some((v) => v.label?.trim())
-        )
-    );
+    return src
+      .map((g, i) => {
+        const hasValues = (g.values ?? []).some((v) => v.label?.trim());
+        let name = (g.name ?? "").trim();
+        if (hasValues && name.length === 0) {
+          name = DEFAULT_NAMES[i] ?? "خيار";
+        }
+        return { ...g, name };
+      })
+      .filter(
+        (g) =>
+          (g.name?.trim()?.length ?? 0) > 0 ||
+          (g.values ?? []).some((v) => v.label?.trim())
+      );
   }
 
-  // إن بقيت مجموعة لها قيم واسمها فاضي — امنع الحفظ برسالة واضحة
   function validateBeforeSave(src: OptionGroup[]): string | null {
     for (const g of src) {
       const hasValues = (g.values ?? []).some((v) => v.label?.trim());
@@ -311,7 +306,6 @@ export default function OptionsQuantityDialog({
   };
 
   async function saveAll() {
-    // نظّف المجموعات قبل الإرسال
     const sanitized = sanitizeGroupsForSave(groups);
     const valErr = validateBeforeSave(sanitized);
     if (valErr) {
@@ -334,9 +328,9 @@ export default function OptionsQuantityDialog({
     try {
       const body = {
         optionsEnabled: enabled,
-        groups: sanitized, // ← نرسل النسخة المنظّفة
+        groups: sanitized,
         variants,
-        branchId: "3f393dae-bd42-40bb-b77e-5686180d2f25", // فرع MAIN
+        branchId: "3f393dae-bd42-40bb-b77e-5686180d2f25",
       };
 
       const res = await fetch(`/api/admin/products/${product.id}/options`, {
@@ -357,6 +351,7 @@ export default function OptionsQuantityDialog({
         }
       }
 
+      // 👇 التعديل المهم هنا: عرض كامل JSON عند غياب message/detail/error
       if (!res.ok || json?.error || json?.success === false) {
         console.error("PATCH /api/admin/products/[id]/options failed →", {
           status: res.status,
@@ -367,7 +362,7 @@ export default function OptionsQuantityDialog({
           json?.detail ||
           json?.message ||
           json?.error ||
-          rawText ||
+          (json ? JSON.stringify(json, null, 2) : rawText) ||
           `PATCH failed with ${res.status}`;
         showErr(detail);
         return;
@@ -390,7 +385,6 @@ export default function OptionsQuantityDialog({
       const found = g.values.find((x) => x.id === id);
       if (found) return found.label || "متغير";
     }
-    // وضع الدمج: نجمع القيم
     const parts: string[] = [];
     for (const vid of v.optionValueIds) {
       for (const g of groups) {
@@ -473,7 +467,6 @@ export default function OptionsQuantityDialog({
                 key={g.id}
                 className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm"
               >
-                {/* عنوان ومعرّف النوع */}
                 <div className="mb-3 grid grid-cols-1 gap-2 md:grid-cols-[140px_1fr_44px]">
                   <select
                     className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm"
@@ -654,7 +647,6 @@ function ValuesEditor({
 
   return (
     <div className="space-y-3">
-      {/* إدخال قيمة جديدة */}
       <div className="grid grid-cols-[1fr_auto] gap-2">
         <input
           className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none placeholder:text-zinc-400 focus:ring-2 focus:ring-teal-500/30"
@@ -682,7 +674,6 @@ function ValuesEditor({
         </button>
       </div>
 
-      {/* حقول النوع الإضافية */}
       {group.type === "color" && (
         <div className="text-xs text-zinc-500">
           استخدم منتقي اللون لكل قيمة بعد إضافتها (يظهر على البادج عند الدعم).
