@@ -53,7 +53,7 @@ export default function OptionsQuantityDialog({
             id: crypto.randomUUID(),
             type: "text",
             name: "مقاسات",
-            values: [{ id: crypto.randomUUID(), label: "" }],
+            values: [], // ⬅️ لا ننشئ قيمة فاضية
           },
         ]
   );
@@ -113,7 +113,7 @@ export default function OptionsQuantityDialog({
                     id: crypto.randomUUID(),
                     type: "text",
                     name: "مقاسات",
-                    values: [{ id: crypto.randomUUID(), label: "" }],
+                    values: [], // ⬅️ لا ننشئ قيمة فاضية
                   },
                 ]
           );
@@ -127,7 +127,7 @@ export default function OptionsQuantityDialog({
               id: crypto.randomUUID(),
               type: "text",
               name: "مقاسات",
-              values: [{ id: crypto.randomUUID(), label: "" }],
+              values: [], // ⬅️ لا ننشئ قيمة فاضية
             },
           ]);
           setVariants([]);
@@ -151,7 +151,7 @@ export default function OptionsQuantityDialog({
         id: crypto.randomUUID(),
         type: "text",
         name: "مقاسات",
-        values: [{ id: crypto.randomUUID(), label: "" }],
+        values: [], // ⬅️ لا ننشئ قيمة فاضية
       },
     ]);
   }
@@ -315,6 +315,20 @@ export default function OptionsQuantityDialog({
       return;
     }
 
+    const cleaned = sanitized
+      .map((g) => ({
+        ...g,
+        values: (g.values ?? []).filter(
+          (v) => (v.label ?? "").trim().length > 0
+        ),
+      }))
+      .filter((g) => (g.values?.length ?? 0) > 0);
+
+    if (cleaned.length === 0) {
+      showErr("أضف قيمة واحدة على الأقل قبل الحفظ.");
+      return;
+    }
+
     if (!canSave) {
       showErr(
         !hasAtLeastOneValue
@@ -328,14 +342,9 @@ export default function OptionsQuantityDialog({
 
     setSaving(true);
     try {
-      // هوت-فيكس: نرسل groups كسلسلة JSON مؤكّدة وغير فارغة
-      const groupsStr = JSON.stringify(sanitized ?? []);
-      const safeGroupsStr =
-        groupsStr && groupsStr.trim().length > 0 ? groupsStr : "[]";
-
       const body = {
         optionsEnabled: enabled,
-        groups: safeGroupsStr, // 👈 الراوت القديم يطلب string min(1)
+        groups: cleaned, // ⬅️ كمصفوفة مباشرة
         variants,
         branchId: "3f393dae-bd42-40bb-b77e-5686180d2f25",
       };
@@ -354,7 +363,7 @@ export default function OptionsQuantityDialog({
         try {
           rawText = await res.text();
         } catch {
-          rawText = "<no body>";
+          /* noop */
         }
       }
 
@@ -374,7 +383,7 @@ export default function OptionsQuantityDialog({
         return;
       }
 
-      onSaved({ optionsEnabled: enabled, options: sanitized, variants });
+      onSaved({ optionsEnabled: enabled, options: cleaned, variants });
       onClose();
     } catch (e: any) {
       showErr(e?.message || e);
