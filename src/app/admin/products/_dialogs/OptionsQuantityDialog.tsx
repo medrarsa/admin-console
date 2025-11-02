@@ -41,7 +41,7 @@ export default function OptionsQuantityDialog({
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
 
-  // بناء المتغيرات: بدون دمج افتراضيًا (سلوك سلة لكل خيار لوحده)
+  // بناء المتغيرات: بدون دمج افتراضيًا
   const [combineOptions, setCombineOptions] = React.useState(false);
 
   const [enabled, setEnabled] = React.useState(!!product.optionsEnabled);
@@ -71,7 +71,6 @@ export default function OptionsQuantityDialog({
         if (!res.ok) throw new Error(String(res.status));
         const json = await res.json();
 
-        // ندعم الصيغتين: (success + groups + variants) أو سلة data[]
         const nextGroups: OptionGroup[] = (json.groups ?? json.data ?? []).map(
           (g: any) => ({
             id: g.id,
@@ -213,7 +212,6 @@ export default function OptionsQuantityDialog({
     }
 
     if (!combineOptions) {
-      // لكل قيمة متغيّر مستقل (بدون دمج)
       setVariants((prev) => {
         const prevMap = new Map(
           prev.map((v) => [v.optionValueIds.join("|"), v])
@@ -232,7 +230,6 @@ export default function OptionsQuantityDialog({
       return;
     }
 
-    // وضع الدمج (اختياري)
     const combos = cartesian(usable.map((g) => g.values));
     setVariants((prev) => {
       const prevMap = new Map(prev.map((v) => [v.optionValueIds.join("|"), v]));
@@ -273,13 +270,55 @@ export default function OptionsQuantityDialog({
   const canSave =
     enabled && hasAtLeastOneValue && variants.length > 0 && !invalidQty;
 
-  /* ------------- Save ------------- */
+  /* ------------- Sanitize & Save ------------- */
+
+  // اجعل أي مجموعة فيها قيم واسمها فاضي = اسم افتراضي
+  function sanitizeGroupsForSave(src: OptionGroup[]): OptionGroup[] {
+    const DEFAULT_NAMES = ["مقاسات", "خيار", "خيارات"];
+    return (
+      src
+        .map((g, i) => {
+          const hasValues = (g.values ?? []).some((v) => v.label?.trim());
+          let name = (g.name ?? "").trim();
+          if (hasValues && name.length === 0) {
+            name = DEFAULT_NAMES[i] ?? "خيار";
+          }
+          return { ...g, name };
+        })
+        // احذف المجموعات الفارغة تمامًا (لا اسم ولا قيم)
+        .filter(
+          (g) =>
+            (g.name?.trim()?.length ?? 0) > 0 ||
+            (g.values ?? []).some((v) => v.label?.trim())
+        )
+    );
+  }
+
+  // إن بقيت مجموعة لها قيم واسمها فاضي — امنع الحفظ برسالة واضحة
+  function validateBeforeSave(src: OptionGroup[]): string | null {
+    for (const g of src) {
+      const hasValues = (g.values ?? []).some((v) => v.label?.trim());
+      if (hasValues && !(g.name ?? "").trim()) {
+        return "هناك خيار يحوي قيماً بدون اسم. اكتب مسمى مثل: مقاسات/اللون…";
+      }
+    }
+    return null;
+  }
+
   const showErr = (m: any) => {
     const msg = typeof m === "string" ? m : JSON.stringify(m, null, 2);
     alert(`تعذّر الحفظ:\n${msg}`);
   };
 
   async function saveAll() {
+    // نظّف المجموعات قبل الإرسال
+    const sanitized = sanitizeGroupsForSave(groups);
+    const valErr = validateBeforeSave(sanitized);
+    if (valErr) {
+      showErr(valErr);
+      return;
+    }
+
     if (!canSave) {
       showErr(
         !hasAtLeastOneValue
@@ -295,7 +334,7 @@ export default function OptionsQuantityDialog({
     try {
       const body = {
         optionsEnabled: enabled,
-        groups,
+        groups: sanitized, // ← نرسل النسخة المنظّفة
         variants,
         branchId: "3f393dae-bd42-40bb-b77e-5686180d2f25", // فرع MAIN
       };
@@ -306,7 +345,6 @@ export default function OptionsQuantityDialog({
         body: JSON.stringify(body),
       });
 
-      // حاول قراءة JSON، وإن فشل خذ النص الخام
       let rawText = "";
       let json: any = null;
       try {
@@ -335,7 +373,7 @@ export default function OptionsQuantityDialog({
         return;
       }
 
-      onSaved({ optionsEnabled: enabled, options: groups, variants });
+      onSaved({ optionsEnabled: enabled, options: sanitized, variants });
       onClose();
     } catch (e: any) {
       showErr(e?.message || e);
@@ -467,7 +505,7 @@ export default function OptionsQuantityDialog({
                   </button>
                 </div>
 
-                {/* قائمة القيم كـ Badges + إدخال */}
+                {/* قيم كـ Badges */}
                 <div className="mb-3 flex flex-wrap gap-2">
                   {g.values
                     .filter((v) => v.label.trim() !== "")
@@ -481,7 +519,7 @@ export default function OptionsQuantityDialog({
                     ))}
                 </div>
 
-                {/* إدخال قيمة جديدة + حقول النوع */}
+                {/* إدخال قيمة + حقول النوع */}
                 <ValuesEditor
                   group={g}
                   onAdd={(label) => addValue(g.id, label)}
