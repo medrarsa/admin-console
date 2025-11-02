@@ -4,7 +4,7 @@ import * as React from "react";
 import { Trash2, Plus, X } from "lucide-react";
 import type { Product, OptionGroup, VariantRow } from "../ProductsClient";
 
-/* ——— Badge ——— */
+/* ===== Badge ===== */
 function Badge({
   children,
   onRemove,
@@ -28,7 +28,7 @@ function Badge({
   );
 }
 
-/* ——— Dialog ——— */
+/* ===== Dialog ===== */
 export default function OptionsQuantityDialog({
   product,
   onClose,
@@ -41,7 +41,7 @@ export default function OptionsQuantityDialog({
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
 
-  // بناء المتغيرات: بدون دمج افتراضيًا (سلوك سلة)
+  // نمط التوليد: بدون دمج افتراضيًا (قائمة لكل خيار)
   const [combineOptions, setCombineOptions] = React.useState(false);
 
   const [enabled, setEnabled] = React.useState(!!product.optionsEnabled);
@@ -61,7 +61,7 @@ export default function OptionsQuantityDialog({
     product.variants ?? []
   );
 
-  /* ------------- Load from API ------------- */
+  /* ---------- Load from API ---------- */
   React.useEffect(() => {
     let alive = true;
     (async () => {
@@ -94,6 +94,7 @@ export default function OptionsQuantityDialog({
             })),
           })
         );
+
         const nextVariants: VariantRow[] = Array.isArray(json.variants)
           ? json.variants
           : [];
@@ -141,7 +142,7 @@ export default function OptionsQuantityDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product.id]);
 
-  /* ------------- Mutations ------------- */
+  /* ---------- Mutations ---------- */
   function addGroup() {
     if (!enabled) setEnabled(true);
     setGroups((g) => [
@@ -187,7 +188,7 @@ export default function OptionsQuantityDialog({
     );
   }
 
-  /* ------------- Variants (per-group, no combine) ------------- */
+  /* ---------- Variants (per-group) ---------- */
   function cartesian<T>(arrays: T[][]): T[][] {
     if (!arrays.length) return [];
     return arrays.reduce<T[][]>((acc, curr) => {
@@ -212,6 +213,7 @@ export default function OptionsQuantityDialog({
     }
 
     if (!combineOptions) {
+      // لكل قيمة متغيّر مستقل
       setVariants((prev) => {
         const prevMap = new Map(
           prev.map((v) => [v.optionValueIds.join("|"), v])
@@ -230,6 +232,7 @@ export default function OptionsQuantityDialog({
       return;
     }
 
+    // وضع الدمج (اختياري)
     const combos = cartesian(usable.map((g) => g.values));
     setVariants((prev) => {
       const prevMap = new Map(prev.map((v) => [v.optionValueIds.join("|"), v]));
@@ -260,7 +263,7 @@ export default function OptionsQuantityDialog({
     ),
   ]);
 
-  /* ------------- Guards ------------- */
+  /* ---------- Guards ---------- */
   const hasAtLeastOneValue = groups.some((g) =>
     g.values.some((v) => v.label.trim() !== "")
   );
@@ -270,8 +273,7 @@ export default function OptionsQuantityDialog({
   const canSave =
     enabled && hasAtLeastOneValue && variants.length > 0 && !invalidQty;
 
-  /* ------------- Sanitize & Save ------------- */
-
+  /* ---------- Sanitize & Save ---------- */
   function sanitizeGroupsForSave(src: OptionGroup[]): OptionGroup[] {
     const DEFAULT_NAMES = ["مقاسات", "خيار", "خيارات"];
     return src
@@ -326,9 +328,10 @@ export default function OptionsQuantityDialog({
 
     setSaving(true);
     try {
+      // 👇 هوت-فيكس: نرسل groups كسلسلة JSON (تدعم الراوت القديم والجديد)
       const body = {
         optionsEnabled: enabled,
-        groups: sanitized,
+        groups: JSON.stringify(sanitized),
         variants,
         branchId: "3f393dae-bd42-40bb-b77e-5686180d2f25",
       };
@@ -351,7 +354,6 @@ export default function OptionsQuantityDialog({
         }
       }
 
-      // 👇 التعديل المهم هنا: عرض كامل JSON عند غياب message/detail/error
       if (!res.ok || json?.error || json?.success === false) {
         console.error("PATCH /api/admin/products/[id]/options failed →", {
           status: res.status,
@@ -377,7 +379,7 @@ export default function OptionsQuantityDialog({
     }
   }
 
-  /* ------------- UI helpers ------------- */
+  /* ---------- UI helpers ---------- */
   function variantLabel(v: VariantRow) {
     if (!v.optionValueIds?.length) return "متغير";
     const id = v.optionValueIds[0];
@@ -398,7 +400,7 @@ export default function OptionsQuantityDialog({
     return parts.join(" — ");
   }
 
-  /* ------------- Render ------------- */
+  /* ---------- Render ---------- */
   return (
     <div className="fixed inset-0 z-[999] grid place-items-center bg-black/50 backdrop-blur-md p-4">
       <div className="w-full max-w-4xl rounded-2xl border border-white/20 bg-white/90 shadow-xl ring-1 ring-black/5">
@@ -628,7 +630,7 @@ export default function OptionsQuantityDialog({
   );
 }
 
-/* ——— Values Editor ——— */
+/* ===== Values Editor ===== */
 function ValuesEditor({
   group,
   onAdd,
@@ -647,6 +649,7 @@ function ValuesEditor({
 
   return (
     <div className="space-y-3">
+      {/* إدخال قيمة جديدة */}
       <div className="grid grid-cols-[1fr_auto] gap-2">
         <input
           className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none placeholder:text-zinc-400 focus:ring-2 focus:ring-teal-500/30"
@@ -674,6 +677,7 @@ function ValuesEditor({
         </button>
       </div>
 
+      {/* حقول إضافية حسب النوع */}
       {group.type === "color" && (
         <div className="text-xs text-zinc-500">
           استخدم منتقي اللون لكل قيمة بعد إضافتها (يظهر على البادج عند الدعم).
