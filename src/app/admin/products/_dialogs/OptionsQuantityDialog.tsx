@@ -4,9 +4,7 @@ import * as React from "react";
 import { Trash2, Plus, X } from "lucide-react";
 import type { Product, OptionGroup, VariantRow } from "../ProductsClient";
 
-/* —————————————————————————————————————
-    BADGE
-————————————————————————————————————— */
+/* ——— Badge ——— */
 function Badge({
   children,
   onRemove,
@@ -30,9 +28,7 @@ function Badge({
   );
 }
 
-/* —————————————————————————————————————
-    DIALOG
-————————————————————————————————————— */
+/* ——— Dialog ——— */
 export default function OptionsQuantityDialog({
   product,
   onClose,
@@ -45,7 +41,7 @@ export default function OptionsQuantityDialog({
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
 
-  // بناء المتغيرات: بدون دمج افتراضيًا
+  // بناء المتغيرات: بدون دمج افتراضيًا (سلوك سلة لكل خيار لوحده)
   const [combineOptions, setCombineOptions] = React.useState(false);
 
   const [enabled, setEnabled] = React.useState(!!product.optionsEnabled);
@@ -65,7 +61,7 @@ export default function OptionsQuantityDialog({
     product.variants ?? []
   );
 
-  /* ----------------- Load from API ----------------- */
+  /* ------------- Load from API ------------- */
   React.useEffect(() => {
     let alive = true;
     (async () => {
@@ -75,22 +71,25 @@ export default function OptionsQuantityDialog({
         if (!res.ok) throw new Error(String(res.status));
         const json = await res.json();
 
+        // ندعم الصيغتين: (success + groups + variants) أو سلة data[]
         const nextGroups: OptionGroup[] = (json.groups ?? json.data ?? []).map(
           (g: any) => ({
             id: g.id,
-            type: g.type || g.display_type || "text",
+            type: (g.type || g.display_type || "text") as OptionGroup["type"],
             name: g.name ?? "",
             values: (g.values ?? []).map((v: any) => ({
               id: v.id,
               label: v.label ?? v.name ?? "",
               colorHex:
                 v.colorHex ??
-                (v.display_value && g.display_type === "color"
+                (v.display_value &&
+                (g.display_type === "color" || g.type === "color")
                   ? v.display_value
                   : undefined),
               imageUrl:
                 v.imageUrl ??
-                (v.image_url && g.display_type === "image"
+                (v.image_url &&
+                (g.display_type === "image" || g.type === "image")
                   ? v.image_url
                   : undefined),
             })),
@@ -143,7 +142,7 @@ export default function OptionsQuantityDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product.id]);
 
-  /* ----------------- Mutations ----------------- */
+  /* ------------- Mutations ------------- */
   function addGroup() {
     if (!enabled) setEnabled(true);
     setGroups((g) => [
@@ -189,7 +188,7 @@ export default function OptionsQuantityDialog({
     );
   }
 
-  /* ----------------- Variants logic (per-group) ----------------- */
+  /* ------------- Variants (per-group, no combine) ------------- */
   function cartesian<T>(arrays: T[][]): T[][] {
     if (!arrays.length) return [];
     return arrays.reduce<T[][]>((acc, curr) => {
@@ -214,7 +213,7 @@ export default function OptionsQuantityDialog({
     }
 
     if (!combineOptions) {
-      // لكل قيمة سطر مستقل (بدون دمج)
+      // لكل قيمة متغيّر مستقل (بدون دمج)
       setVariants((prev) => {
         const prevMap = new Map(
           prev.map((v) => [v.optionValueIds.join("|"), v])
@@ -264,7 +263,7 @@ export default function OptionsQuantityDialog({
     ),
   ]);
 
-  /* ----------------- Guards ----------------- */
+  /* ------------- Guards ------------- */
   const hasAtLeastOneValue = groups.some((g) =>
     g.values.some((v) => v.label.trim() !== "")
   );
@@ -274,10 +273,15 @@ export default function OptionsQuantityDialog({
   const canSave =
     enabled && hasAtLeastOneValue && variants.length > 0 && !invalidQty;
 
-  /* ----------------- Save ----------------- */
+  /* ------------- Save ------------- */
+  const showErr = (m: any) => {
+    const msg = typeof m === "string" ? m : JSON.stringify(m, null, 2);
+    alert(`تعذّر الحفظ:\n${msg}`);
+  };
+
   async function saveAll() {
     if (!canSave) {
-      alert(
+      showErr(
         !hasAtLeastOneValue
           ? "أضف قيمة واحدة على الأقل."
           : invalidQty
@@ -293,7 +297,7 @@ export default function OptionsQuantityDialog({
         optionsEnabled: enabled,
         groups,
         variants,
-        branchId: "3f393dae-bd42-40bb-b77e-5686180d2f25",
+        branchId: "3f393dae-bd42-40bb-b77e-5686180d2f25", // فرع MAIN
       };
 
       const res = await fetch(`/api/admin/products/${product.id}/options`, {
@@ -302,30 +306,45 @@ export default function OptionsQuantityDialog({
         body: JSON.stringify(body),
       });
 
-      let raw = "";
+      // حاول قراءة JSON، وإن فشل خذ النص الخام
+      let rawText = "";
       let json: any = null;
       try {
         json = await res.clone().json();
       } catch {
-        raw = await res.text().catch(() => "<no-body>");
+        try {
+          rawText = await res.text();
+        } catch {
+          rawText = "<no body>";
+        }
       }
 
-      if (!res.ok || json?.success === false || json?.error) {
-        const msg = json?.detail || json?.error || raw || `PATCH ${res.status}`;
-        alert(`تعذّر الحفظ:\n${msg}`);
+      if (!res.ok || json?.error || json?.success === false) {
+        console.error("PATCH /api/admin/products/[id]/options failed →", {
+          status: res.status,
+          json,
+          rawText,
+        });
+        const detail =
+          json?.detail ||
+          json?.message ||
+          json?.error ||
+          rawText ||
+          `PATCH failed with ${res.status}`;
+        showErr(detail);
         return;
       }
 
       onSaved({ optionsEnabled: enabled, options: groups, variants });
       onClose();
     } catch (e: any) {
-      alert(`تعذّر الحفظ (استثناء):\n${e?.message || e}`);
+      showErr(e?.message || e);
     } finally {
       setSaving(false);
     }
   }
 
-  /* ----------------- UI helpers ----------------- */
+  /* ------------- UI helpers ------------- */
   function variantLabel(v: VariantRow) {
     if (!v.optionValueIds?.length) return "متغير";
     const id = v.optionValueIds[0];
@@ -333,7 +352,7 @@ export default function OptionsQuantityDialog({
       const found = g.values.find((x) => x.id === id);
       if (found) return found.label || "متغير";
     }
-    // لو دمج: نعرض جميع القيم
+    // وضع الدمج: نجمع القيم
     const parts: string[] = [];
     for (const vid of v.optionValueIds) {
       for (const g of groups) {
@@ -347,7 +366,7 @@ export default function OptionsQuantityDialog({
     return parts.join(" — ");
   }
 
-  /* ----------------- Render ----------------- */
+  /* ------------- Render ------------- */
   return (
     <div className="fixed inset-0 z-[999] grid place-items-center bg-black/50 backdrop-blur-md p-4">
       <div className="w-full max-w-4xl rounded-2xl border border-white/20 bg-white/90 shadow-xl ring-1 ring-black/5">
@@ -578,9 +597,7 @@ export default function OptionsQuantityDialog({
   );
 }
 
-/* —————————————————————————————————————
-    Values Editor
-————————————————————————————————————— */
+/* ——— Values Editor ——— */
 function ValuesEditor({
   group,
   onAdd,
