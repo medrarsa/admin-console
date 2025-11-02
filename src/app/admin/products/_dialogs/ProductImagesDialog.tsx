@@ -29,13 +29,16 @@ export default function ProductImagesDialog({
   const [busy, setBusy] = React.useState(false);
   const [files, setFiles] = React.useState<FileList | null>(null);
 
-  // fetch images on open
+  /** جلب الصور عند الفتح (no-store لضمان عدم الكاش) */
   React.useEffect(() => {
     let alive = true;
     (async () => {
       try {
         setLoading(true);
-        const res = await fetch(`/api/admin/products/${product.id}/images`, { cache: "no-store" });
+        const res = await fetch(`/api/admin/products/${product.id}/images`, {
+          cache: "no-store",
+          headers: { "x-requested": "dialog-images" },
+        });
         const j = await res.json();
         if (alive) setList((j?.data ?? []) as Img[]);
       } finally {
@@ -47,14 +50,13 @@ export default function ProductImagesDialog({
     };
   }, [product.id]);
 
+  /** رفع متعدد */
   async function doUpload() {
     if (!files || !files.length) return;
     setBusy(true);
     try {
       const fd = new FormData();
       Array.from(files).forEach((f) => fd.append("files", f));
-      // (اختياري) أوصاف alt بنفس ترتيب الملفات:
-      // alts.forEach((a) => fd.append("alts", a));
 
       const res = await fetch(`/api/admin/products/${product.id}/images`, {
         method: "POST",
@@ -67,7 +69,7 @@ export default function ProductImagesDialog({
       setList(next);
       setFiles(null);
 
-      // لو صارت أول صورة جديدة أساسية تلقائيًا حدّث بطاقة المنتج
+      // إن صار تعيين أساسية تلقائيًا، حدِّث بطاقة المنتج
       const primary = next.find((x) => x.is_primary);
       if (primary?.url) onSaved({ imageUrl: primary.url });
     } catch (e: any) {
@@ -77,6 +79,7 @@ export default function ProductImagesDialog({
     }
   }
 
+  /** تعيين أساسية */
   async function setPrimary(imgId: string) {
     setBusy(true);
     try {
@@ -88,8 +91,10 @@ export default function ProductImagesDialog({
       const j = await res.json();
       if (!res.ok || !j?.success) throw new Error(j?.error || "failed to set primary");
 
-      setList((prev) => prev.map((x) => ({ ...x, is_primary: x.id === imgId })));
-      const primaryUrl = list.find((x) => x.id === imgId)?.url;
+      const next = list.map((x) => ({ ...x, is_primary: x.id === imgId }));
+      setList(next);
+
+      const primaryUrl = next.find((x) => x.is_primary)?.url;
       if (primaryUrl) onSaved({ imageUrl: primaryUrl });
     } catch (e: any) {
       alert(`فشل التعيين: ${e?.message || e}`);
@@ -98,6 +103,7 @@ export default function ProductImagesDialog({
     }
   }
 
+  /** حذف صورة */
   async function removeImage(img: Img) {
     if (!confirm("حذف هذه الصورة؟")) return;
     setBusy(true);
@@ -109,13 +115,16 @@ export default function ProductImagesDialog({
       });
       const j = await res.json();
       if (!res.ok || !j?.success) throw new Error(j?.error || "failed to delete");
-      setList((prev) => prev.filter((x) => x.id !== img.id));
 
-      // إن حذفنا الأساسية، عيّن أول صورة متبقية كأساسية محليًا (اختياري)
-      if (img.is_primary) {
-        const first = list.find((x) => x.id !== img.id);
-        if (first) setPrimary(first.id);
-        else onSaved({ imageUrl: undefined });
+      const remain = list.filter((x) => x.id !== img.id);
+      setList(remain);
+
+      // لو حذفنا الأساسية، حاول عيّن أول واحدة متبقية كأساسية
+      if (img.is_primary && remain.length) {
+        await setPrimary(remain[0].id);
+      }
+      if (img.is_primary && remain.length === 0) {
+        onSaved({ imageUrl: undefined });
       }
     } catch (e: any) {
       alert(`فشل الحذف: ${e?.message || e}`);
@@ -124,7 +133,7 @@ export default function ProductImagesDialog({
     }
   }
 
-  // ترتيب بسيط لأعلى/أسفل
+  /** ترتيب بسيط ↑ ↓ */
   async function move(idx: number, dir: -1 | 1) {
     const next = [...list];
     const j = idx + dir;
@@ -143,6 +152,18 @@ export default function ProductImagesDialog({
     } catch (e: any) {
       alert(`فشل الترتيب: ${e?.message || e}`);
     }
+  }
+
+  /** ⬇️ القائمة المنسدلة لتعيين الأساسية */
+  const primaryId = React.useMemo(
+    () => list.find((x) => x.is_primary)?.id ?? "",
+    [list]
+  );
+
+  function handlePrimarySelect(e: React.ChangeEvent<HTMLSelectElement>) {
+    const id = e.currentTarget.value;
+    if (!id) return;
+    setPrimary(id);
   }
 
   return (
@@ -181,7 +202,34 @@ export default function ProductImagesDialog({
             </div>
           </div>
 
-          {/* قائمة الصور */}
+          {/* ✅ قائمة منسدلة لاختيار الأساسية */}
+          <div className="rounded-2xl border border-zinc-200/70 bg-white/80 p-4 shadow-sm">
+            <label className="mb-1 block text-xs text-zinc-600">اختر الصورة الأساسية</label>
+            <select
+              className="w-full rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none"
+              value={primaryId}
+              onChange={handlePrimarySelect}
+              disabled={loading || list.length === 0 || busy}
+            >
+              {list.length === 0 ? (
+                <option value="">لا توجد صور</option>
+              ) : (
+                <>
+                  {list
+                    .slice()
+                    .sort((a, b) => a.sort_order - b.sort_order)
+                    .map((img, i) => (
+                      <option key={img.id} value={img.id}>
+                        {img.is_primary ? "⭐ " : ""}
+                        صورة #{i + 1} — {new URL(img.url).pathname.split("/").pop()}
+                      </option>
+                    ))}
+                </>
+              )}
+            </select>
+          </div>
+
+          {/* شبكة الصور */}
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             {loading ? (
               <div className="col-span-full grid place-items-center py-10 text-sm text-zinc-500">تحميل الصور…</div>
@@ -193,7 +241,8 @@ export default function ProductImagesDialog({
                 .map((img, idx) => (
                   <div key={img.id} className="rounded-2xl border border-zinc-200/70 bg-white/80 p-3 space-y-2">
                     <div className="relative h-40 w-full overflow-hidden rounded-xl border border-zinc-200/60 bg-white">
-                      <Image src={img.url} alt={img.alt ?? ""} fill unoptimized className="object-contain" />
+                      {/* إعطِ Image key لفرض إعادة العرض عند تبدّل src */}
+                      <Image key={img.url} src={img.url} alt={img.alt ?? ""} fill unoptimized className="object-contain" />
                     </div>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
