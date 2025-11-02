@@ -16,6 +16,9 @@ export default function OptionsQuantityDialog({
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
 
+  // 👇 وضع التوليد: بدون دمج افتراضيًا (كما هو بسلة)
+  const [combineOptions, setCombineOptions] = React.useState(false);
+
   const [enabled, setEnabled] = React.useState(!!product.optionsEnabled);
   const [groups, setGroups] = React.useState<OptionGroup[]>(
     product.options?.length
@@ -24,7 +27,7 @@ export default function OptionsQuantityDialog({
           {
             id: crypto.randomUUID(),
             type: "text",
-            name: "مقاس",
+            name: "مقاسات",
             values: [{ id: crypto.randomUUID(), label: "" }],
           },
         ]
@@ -33,7 +36,7 @@ export default function OptionsQuantityDialog({
     product.variants ?? []
   );
 
-  // --------- عند الفتح: جلب الخيارات من الـ API ----------
+  // ---------- جلب من API عند الفتح ----------
   React.useEffect(() => {
     let alive = true;
     async function fetchOptions() {
@@ -45,13 +48,43 @@ export default function OptionsQuantityDialog({
         if (!res.ok) throw new Error(`GET failed with ${res.status}`);
         const json = await res.json();
 
-        let nextGroups: OptionGroup[];
-        let nextVariants: VariantRow[] = [];
-        let nextEnabled = true;
+        // ندعم الصيغتين: (success + groups + variants) أو data[]
+        if (json?.success || typeof json?.optionsEnabled !== "undefined") {
+          const nextEnabled = !!(json.optionsEnabled ?? true);
+          const nextGroups: OptionGroup[] = (json.groups ?? []).map((g: any) => ({
+            id: g.id,
+            type: g.type,
+            name: g.name,
+            values: (g.values ?? []).map((v: any) => ({
+              id: v.id,
+              label: v.label ?? v.name ?? "",
+              colorHex: v.colorHex,
+              imageUrl: v.imageUrl,
+            })),
+          }));
+          const nextVariants: VariantRow[] = Array.isArray(json.variants)
+            ? json.variants
+            : [];
 
-        if (json?.data && Array.isArray(json.data)) {
-          // صيغة سلة: data = قائمة خيارات
-          const parsed: OptionGroup[] = json.data.map((o: any) => ({
+          if (alive) {
+            setEnabled(nextEnabled);
+            setGroups(
+              nextGroups.length
+                ? nextGroups
+                : [
+                    {
+                      id: crypto.randomUUID(),
+                      type: "text",
+                      name: "مقاسات",
+                      values: [{ id: crypto.randomUUID(), label: "" }],
+                    },
+                  ]
+            );
+            setVariants(nextVariants);
+          }
+        } else if (Array.isArray(json?.data)) {
+          // صيغة سلة (قائمة خيارات فقط)
+          const nextGroups: OptionGroup[] = json.data.map((o: any) => ({
             id: o.id,
             type: (o.display_type ?? "text") as OptionGroup["type"],
             name: o.name ?? "",
@@ -59,78 +92,49 @@ export default function OptionsQuantityDialog({
               ? o.values.map((v: any) => ({
                   id: v.id,
                   label: v.name ?? "",
-                  colorHex:
-                    (o.display_type === "color" ? v.display_value : undefined) ??
-                    undefined,
-                  imageUrl:
-                    (o.display_type === "image" ? v.image_url : undefined) ??
-                    undefined,
+                  colorHex: o.display_type === "color" ? v.display_value : undefined,
+                  imageUrl: o.display_type === "image" ? v.image_url : undefined,
                 }))
               : [],
           }));
-          if (parsed.length === 0) {
-            nextGroups = [
-              {
-                id: crypto.randomUUID(),
-                type: "text",
-                name: "مقاس",
-                values: [{ id: crypto.randomUUID(), label: "" }],
-              },
-            ];
-          } else {
-            nextGroups = parsed;
-            nextEnabled = parsed.some((g) => g.values.length > 0);
-          }
-        } else if (
-          typeof json?.optionsEnabled !== "undefined" &&
-          Array.isArray(json?.groups)
-        ) {
-          // صيغة بديلة: {optionsEnabled, groups, variants}
-          nextEnabled = !!json.optionsEnabled;
-          nextGroups = json.groups as OptionGroup[];
-          nextVariants = Array.isArray(json?.variants)
-            ? (json.variants as VariantRow[])
-            : [];
-          if (nextGroups.length === 0) {
-            nextGroups = [
-              {
-                id: crypto.randomUUID(),
-                type: "text",
-                name: "مقاس",
-                values: [{ id: crypto.randomUUID(), label: "" }],
-              },
-            ];
-            nextVariants = [];
-            nextEnabled = true;
+          if (alive) {
+            setEnabled(nextGroups.some((g) => g.values.length > 0));
+            setGroups(
+              nextGroups.length
+                ? nextGroups
+                : [
+                    {
+                      id: crypto.randomUUID(),
+                      type: "text",
+                      name: "مقاسات",
+                      values: [{ id: crypto.randomUUID(), label: "" }],
+                    },
+                  ]
+            );
+            setVariants([]);
           }
         } else {
-          // رد غير متوقع -> افتراضي
-          nextGroups = [
-            {
-              id: crypto.randomUUID(),
-              type: "text",
-              name: "مقاس",
-              values: [{ id: crypto.randomUUID(), label: "" }],
-            },
-          ];
-          nextVariants = [];
-          nextEnabled = true;
-        }
-
-        if (alive) {
-          setEnabled(nextEnabled);
-          setGroups(nextGroups);
-          setVariants(nextVariants);
+          if (alive) {
+            setEnabled(true);
+            setGroups([
+              {
+                id: crypto.randomUUID(),
+                type: "text",
+                name: "مقاسات",
+                values: [{ id: crypto.randomUUID(), label: "" }],
+              },
+            ]);
+            setVariants([]);
+          }
         }
       } catch {
-        // احتياطي: ابقَ على افتراضي
         if (alive) {
           setEnabled(true);
           setGroups([
             {
               id: crypto.randomUUID(),
               type: "text",
-              name: "مقاس",
+              name: "مقاسات",
               values: [{ id: crypto.randomUUID(), label: "" }],
             },
           ]);
@@ -153,6 +157,7 @@ export default function OptionsQuantityDialog({
     return () => window.removeEventListener("keydown", onEsc);
   }, [onClose]);
 
+  // ------- تعديل/إضافة/حذف المجموعات والقيم -------
   function addGroup() {
     if (!enabled) setEnabled(true);
     setGroups((g) => [
@@ -160,7 +165,7 @@ export default function OptionsQuantityDialog({
       {
         id: crypto.randomUUID(),
         type: "text",
-        name: "مقاس",
+        name: "مقاسات",
         values: [{ id: crypto.randomUUID(), label: "" }],
       },
     ]);
@@ -198,6 +203,7 @@ export default function OptionsQuantityDialog({
     );
   }
 
+  // ------- توليد المتغيرات: لكل مجموعة لوحدها (بدون دمج) -------
   function cartesian<T>(arrays: T[][]): T[][] {
     if (!arrays.length) return [];
     return arrays.reduce<T[][]>((acc, curr) => {
@@ -209,15 +215,39 @@ export default function OptionsQuantityDialog({
   }
 
   function recomputeVariants() {
-    const usable = groups.filter((g) => g.values.length > 0);
+    const usable = groups
+      .map((g) => ({ ...g, values: g.values.filter((v) => v.label.trim() !== "") }))
+      .filter((g) => g.values.length > 0);
+
     if (!enabled || usable.length === 0) {
       setVariants([]);
       return;
     }
+
+    if (!combineOptions) {
+      // flat per-group (بدون دمج)
+      setVariants((prev) => {
+        const prevMap = new Map(prev.map((v) => [v.optionValueIds.join("|"), v]));
+        const flatValues = usable.flatMap((g) => g.values.map((v) => v.id));
+
+        return flatValues.map((valId) => {
+          const old = prevMap.get(valId);
+          return {
+            id: old?.id ?? crypto.randomUUID(),
+            optionValueIds: [valId],
+            sku: old?.sku ?? "",
+            qty: old?.qty ?? 0,
+          };
+        });
+      });
+      return;
+    }
+
+    // وضع الدمج (اختياري)
     const combos = cartesian(usable.map((g) => g.values));
     setVariants((prev) => {
       const prevMap = new Map(prev.map((v) => [v.optionValueIds.join("|"), v]));
-      return combos.map((combo: OptionGroup["values"]) => {
+      return combos.map((combo) => {
         const key = combo.map((c) => c.id).join("|");
         const old = prevMap.get(key);
         return {
@@ -235,18 +265,15 @@ export default function OptionsQuantityDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     enabled,
+    combineOptions,
     JSON.stringify(
-      groups.map((g) => ({ id: g.id, v: g.values.map((x) => x.id) }))
+      groups.map((g) => ({ id: g.id, v: g.values.map((x) => x.id + ":" + x.label) }))
     ),
   ]);
 
-  // ----- التحقق قبل الحفظ -----
+  // ------- صلاحية الحفظ -------
   const hasAtLeastOneValue =
-    groups.length > 0 && groups.some((g) => g.values.length > 0);
-
-  const invalidSkuCount = variants.filter(
-    (v) => !v.sku || (v.sku as string).trim().length < 3
-  ).length;
+    groups.length > 0 && groups.some((g) => g.values.filter((v) => v.label.trim() !== "").length > 0);
 
   const invalidQtyCount = variants.filter(
     (v) => typeof v.qty !== "number" || (v.qty as number) < 0
@@ -256,19 +283,17 @@ export default function OptionsQuantityDialog({
     enabled &&
     hasAtLeastOneValue &&
     variants.length > 0 &&
-    invalidSkuCount === 0 &&
     invalidQtyCount === 0;
 
+  // ------- حفظ -------
   async function saveAll() {
     if (!canSave) {
       alert(
-        invalidSkuCount > 0
-          ? "الرجاء إدخال SKU لا يقل عن 3 أحرف لكل متغير."
-          : invalidQtyCount > 0
+        invalidQtyCount > 0
           ? "الرجاء إدخال كمية صحيحة (صفر أو أكثر) لكل متغير."
           : !hasAtLeastOneValue
           ? "أضف قيمة واحدة على الأقل."
-          : "أكمل المتطلبات قبل الحفظ."
+          : "أكمل المتطلبات"
       );
       return;
     }
@@ -288,7 +313,6 @@ export default function OptionsQuantityDialog({
         body: JSON.stringify(body),
       });
 
-      // حاول قراءة JSON، وإن فشل خذ النص الخام
       let rawText = "";
       let json: any = null;
       try {
@@ -323,6 +347,28 @@ export default function OptionsQuantityDialog({
     }
   }
 
+  // --------- Helpers UI ---------
+  function getLabelForVariant(v: VariantRow) {
+    // قيمة واحدة في وضع عدم الدمج → نرجع label مباشرة
+    const id = v.optionValueIds[0];
+    for (const g of groups) {
+      const val = g.values.find((x) => x.id === id);
+      if (val) return val.label || "قيمة";
+    }
+    // وضع الدمج: نجمع القيم
+    const parts: string[] = [];
+    for (const valId of v.optionValueIds) {
+      for (const g of groups) {
+        const val = g.values.find((x) => x.id === valId);
+        if (val) {
+          parts.push(val.label);
+          break;
+        }
+      }
+    }
+    return parts.filter(Boolean).join(" — ");
+  }
+
   return (
     <div className="fixed inset-0 z-[999] grid place-items-center bg-black/50 backdrop-blur-md p-4">
       <div className="w-full max-w-4xl rounded-2xl border border-white/20 bg-white/80 shadow-[0_20px_60px_-10px_rgba(0,0,0,.35)] ring-1 ring-black/5 supports-[backdrop-filter]:bg-white/60">
@@ -335,12 +381,8 @@ export default function OptionsQuantityDialog({
             — <span className="text-zinc-800">{product.name}</span>
           </h3>
           <div className="flex items-center gap-2">
-            {loading && (
-              <span className="text-xs text-zinc-500">جاري التحميل…</span>
-            )}
-            {saving && (
-              <span className="text-xs text-teal-700">جاري الحفظ…</span>
-            )}
+            {loading && <span className="text-xs text-zinc-500">جاري التحميل…</span>}
+            {saving && <span className="text-xs text-teal-700">جاري الحفظ…</span>}
             <button
               className="rounded-xl border border-zinc-200/60 bg-white/80 px-3 py-1.5 text-sm hover:bg-zinc-50/80 transition-colors"
               onClick={onClose}
@@ -376,24 +418,21 @@ export default function OptionsQuantityDialog({
             </label>
           </div>
 
-          {/* رسائل تحذير قبل الحفظ */}
-          {!hasAtLeastOneValue && (
-            <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 border border-amber-200">
-              أضف قيمة واحدة على الأقل لكل خيار قبل الحفظ.
-            </div>
-          )}
-          {invalidSkuCount > 0 && (
-            <div className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800 border border-rose-200">
-              يوجد {invalidSkuCount} متغير بدون SKU صالح (3 أحرف على الأقل).
-            </div>
-          )}
-          {invalidQtyCount > 0 && (
-            <div className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800 border border-rose-200">
-              يوجد {invalidQtyCount} متغير بكمية غير صالحة.
-            </div>
-          )}
+          {/* تبديل نمط الدمج */}
+          <div className="mb-4 flex items-center justify-between rounded-xl border border-zinc-200/70 bg-white/70 px-4 py-2.5">
+            <span className="text-[13px] text-zinc-700">
+              نمط المتغيرات: {combineOptions ? "دمج كل الخيارات" : "قائمة لكل خيار (بدون دمج)"}
+            </span>
+            <button
+              className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs hover:bg-zinc-50"
+              onClick={() => setCombineOptions((x) => !x)}
+              type="button"
+            >
+              تبديل النمط
+            </button>
+          </div>
 
-          {/* Option Groups */}
+          {/* المجموعات */}
           <div className="space-y-4">
             {groups.map((g) => (
               <div
@@ -417,12 +456,9 @@ export default function OptionsQuantityDialog({
 
                   <input
                     className="rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none placeholder:text-zinc-400 focus:ring-2 focus:ring-teal-500/40 transition"
-                    placeholder="مسمى الخيار (مثل اللون، المقاس)"
+                    placeholder="مسمى الخيار (مثل مقاسات)"
                     value={g.name}
-                    onChange={(e) => {
-                      if (!enabled && e.target.value.trim()) setEnabled(true);
-                      patchGroup(g.id, { name: e.target.value });
-                    }}
+                    onChange={(e) => patchGroup(g.id, { name: e.target.value })}
                   />
 
                   <button
@@ -434,7 +470,6 @@ export default function OptionsQuantityDialog({
                   </button>
                 </div>
 
-                {/* Values Editor */}
                 <ValuesEditor
                   group={g}
                   onAdd={(label) => addValue(g.id, label)}
@@ -465,7 +500,7 @@ export default function OptionsQuantityDialog({
             </button>
           </div>
 
-          {/* Variants Table */}
+          {/* المتغيرات الناتجة */}
           {enabled && variants.length > 0 && (
             <div className="mt-5 overflow-hidden rounded-2xl border border-zinc-200/70 bg-white/80 shadow-sm">
               <div className="border-b border-zinc-200/70 bg-gradient-to-l from-zinc-50 to-white px-4 py-2.5 text-sm font-bold text-zinc-700">
@@ -475,38 +510,20 @@ export default function OptionsQuantityDialog({
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/60">
                     <tr className="border-b border-zinc-200/70 text-zinc-600">
-                      <th className="px-3 py-2 text-start font-semibold">
-                        المتغير
-                      </th>
-                      <th className="px-3 py-2 text-start font-semibold">
-                        SKU
-                      </th>
-                      <th className="px-3 py-2 text-start font-semibold">
-                        الكمية
-                      </th>
+                      <th className="px-3 py-2 text-start font-semibold">المتغير</th>
+                      <th className="px-3 py-2 text-start font-semibold">SKU</th>
+                      <th className="px-3 py-2 text-start font-semibold">الكمية</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {variants.map((v, i) => {
-                      const label = v.optionValueIds
-                        .map((id, idx) => {
-                          const gg = groups[idx];
-                          const val = gg?.values.find((vv) => vv.id === id);
-                          return gg && val
-                            ? `${gg.name || "خيار"}: ${val.label}`
-                            : "";
-                        })
-                        .filter(Boolean)
-                        .join(" — ");
-
+                    {variants.map((v) => {
+                      const label = getLabelForVariant(v) || "متغير";
                       return (
                         <tr
                           key={v.id}
                           className="border-b border-zinc-100/80 odd:bg-white/60 even:bg-zinc-50/40"
                         >
-                          <td className="px-3 py-2 text-zinc-800">
-                            {label || `متغير #${i + 1}`}
-                          </td>
+                          <td className="px-3 py-2 text-zinc-800">{label}</td>
                           <td className="px-3 py-2">
                             <input
                               className="w-full rounded-lg border border-zinc-200/70 bg-white/80 px-2.5 py-1.5 text-sm outline-none placeholder:text-zinc-400 focus:ring-2 focus:ring-teal-500/40 transition"
@@ -514,9 +531,7 @@ export default function OptionsQuantityDialog({
                               onChange={(e) =>
                                 setVariants((arr) =>
                                   arr.map((x) =>
-                                    x.id === v.id
-                                      ? { ...x, sku: e.target.value }
-                                      : x
+                                    x.id === v.id ? { ...x, sku: e.target.value } : x
                                   )
                                 )
                               }
@@ -566,17 +581,6 @@ export default function OptionsQuantityDialog({
               disabled={saving || !canSave}
               className="rounded-xl bg-gradient-to-l from-teal-600 to-sky-600 px-6 py-2 text-sm font-semibold text-white shadow hover:brightness-[1.05] active:brightness-95 transition disabled:opacity-60"
               type="button"
-              title={
-                !canSave
-                  ? invalidSkuCount > 0
-                    ? "أدخل SKU صالحًا (3 أحرف على الأقل) لكل متغير"
-                    : invalidQtyCount > 0
-                    ? "أدخل كمية صالحة لكل متغير"
-                    : !hasAtLeastOneValue
-                    ? "أضف قيمة واحدة على الأقل"
-                    : "أكمل المتطلبات"
-                  : "حفظ"
-              }
             >
               {saving ? "جارٍ الحفظ..." : "حفظ"}
             </button>
@@ -612,11 +616,9 @@ function ValuesEditor({
         >
           <input
             className="rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none placeholder:text-zinc-400 focus:ring-2 focus:ring-teal-500/40 transition"
-            placeholder="القيمة"
+            placeholder="القيمة (مثال: 50)"
             value={v.label}
-            onChange={(e) => {
-              onPatchValue(v.id, { label: e.target.value });
-            }}
+            onChange={(e) => onPatchValue(v.id, { label: e.target.value })}
           />
 
           {group.type === "color" ? (
