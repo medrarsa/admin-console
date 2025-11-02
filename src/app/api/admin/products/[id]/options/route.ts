@@ -71,6 +71,25 @@ function autoSku(productId: string, index: number) {
   return `PRD-${short}-${index + 1}`;
 }
 
+/* ==== SKU uniqueness helpers (جديدة) ==== */
+function uniqueSuffix(i: number) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  if (i < alphabet.length) return "-" + alphabet[i];
+  const q = Math.floor(i / alphabet.length);
+  const r = i % alphabet.length;
+  return "-" + alphabet[r] + q;
+}
+
+function ensureUniqueSku(base: string, taken: Set<string>) {
+  let candidate = base;
+  let i = 0;
+  while (taken.has(candidate)) {
+    candidate = base + uniqueSuffix(i++);
+  }
+  taken.add(candidate);
+  return candidate;
+}
+
 /* =========================
    GET: يرجع groups + variants بنفس صيغة المودال
    ========================= */
@@ -191,7 +210,7 @@ export async function PATCH(
   const { id: productId } = await ctx.params;
   if (!productId) return fail("Missing product id", null, 400);
 
-  // 👇 إصلاح أخطاء الواجهة: لو أرسلت string بالخطأ، نحاول تحويله
+  // 👇 تسامح: لو الواجهة أرسلت groups كسلسلة JSON
   const raw = await req.json();
   if (typeof raw?.groups === "string") {
     try {
@@ -329,8 +348,24 @@ export async function PATCH(
     // 2) variants + links + inventory
     const { data: existingVariants } = await supabase
       .from("product_variants")
-      .select("id")
+      .select("id, sku")
       .eq("product_id", productId);
+
+    // SKUs الحالية كي لا نكررها
+    const takenSkus = new Set<string>(
+      (existingVariants ?? [])
+        .map((v) => (v.sku || "").trim())
+        .filter((s) => s.length > 0)
+    );
+
+    const normalizedVariants = variants.map((v, i) => {
+      const base =
+        v.sku && v.sku.trim().length >= 3
+          ? v.sku.trim()
+          : autoSku(productId, i);
+      const finalSku = ensureUniqueSku(base, takenSkus);
+      return { ...v, sku: finalSku };
+    });
 
     async function resetVariantLinks(variantId: string) {
       const { error } = await supabase
@@ -365,14 +400,6 @@ export async function PATCH(
         if (upd) throw new Error(`inventory.update: ${upd.message}`);
       }
     }
-
-    const normalizedVariants = variants.map((v, i) => ({
-      ...v,
-      sku:
-        v.sku && v.sku.trim().length >= 3
-          ? v.sku.trim()
-          : autoSku(productId, i),
-    }));
 
     for (const v of normalizedVariants) {
       let dbVarId = existingVariants?.find((ev) => ev.id === v.id)?.id;
