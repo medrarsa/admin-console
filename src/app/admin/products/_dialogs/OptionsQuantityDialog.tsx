@@ -1,9 +1,38 @@
 "use client";
 
 import * as React from "react";
-import { Trash2 } from "lucide-react";
+import { Trash2, Plus, X } from "lucide-react";
 import type { Product, OptionGroup, VariantRow } from "../ProductsClient";
 
+/* —————————————————————————————————————
+    BADGE
+————————————————————————————————————— */
+function Badge({
+  children,
+  onRemove,
+}: {
+  children: React.ReactNode;
+  onRemove?: () => void;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white/90 px-3 py-1 text-xs text-zinc-700 shadow-sm">
+      {children}
+      {onRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          className="ml-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-zinc-100 hover:bg-zinc-200"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      )}
+    </span>
+  );
+}
+
+/* —————————————————————————————————————
+    DIALOG
+————————————————————————————————————— */
 export default function OptionsQuantityDialog({
   product,
   onClose,
@@ -16,7 +45,7 @@ export default function OptionsQuantityDialog({
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
 
-  // 👇 وضع التوليد: بدون دمج افتراضيًا (كما هو بسلة)
+  // بناء المتغيرات: بدون دمج افتراضيًا
   const [combineOptions, setCombineOptions] = React.useState(false);
 
   const [enabled, setEnabled] = React.useState(!!product.optionsEnabled);
@@ -36,96 +65,60 @@ export default function OptionsQuantityDialog({
     product.variants ?? []
   );
 
-  // ---------- جلب من API عند الفتح ----------
+  /* ----------------- Load from API ----------------- */
   React.useEffect(() => {
     let alive = true;
-    async function fetchOptions() {
+    (async () => {
       try {
         setLoading(true);
-        const res = await fetch(`/api/admin/products/${product.id}/options`, {
-          method: "GET",
-        });
-        if (!res.ok) throw new Error(`GET failed with ${res.status}`);
+        const res = await fetch(`/api/admin/products/${product.id}/options`);
+        if (!res.ok) throw new Error(String(res.status));
         const json = await res.json();
 
-        // ندعم الصيغتين: (success + groups + variants) أو data[]
-        if (json?.success || typeof json?.optionsEnabled !== "undefined") {
-          const nextEnabled = !!(json.optionsEnabled ?? true);
-          const nextGroups: OptionGroup[] = (json.groups ?? []).map((g: any) => ({
+        const nextGroups: OptionGroup[] = (json.groups ?? json.data ?? []).map(
+          (g: any) => ({
             id: g.id,
-            type: g.type,
-            name: g.name,
+            type: g.type || g.display_type || "text",
+            name: g.name ?? "",
             values: (g.values ?? []).map((v: any) => ({
               id: v.id,
               label: v.label ?? v.name ?? "",
-              colorHex: v.colorHex,
-              imageUrl: v.imageUrl,
+              colorHex:
+                v.colorHex ??
+                (v.display_value && g.display_type === "color"
+                  ? v.display_value
+                  : undefined),
+              imageUrl:
+                v.imageUrl ??
+                (v.image_url && g.display_type === "image"
+                  ? v.image_url
+                  : undefined),
             })),
-          }));
-          const nextVariants: VariantRow[] = Array.isArray(json.variants)
-            ? json.variants
-            : [];
+          })
+        );
+        const nextVariants: VariantRow[] = Array.isArray(json.variants)
+          ? json.variants
+          : [];
 
-          if (alive) {
-            setEnabled(nextEnabled);
-            setGroups(
-              nextGroups.length
-                ? nextGroups
-                : [
-                    {
-                      id: crypto.randomUUID(),
-                      type: "text",
-                      name: "مقاسات",
-                      values: [{ id: crypto.randomUUID(), label: "" }],
-                    },
-                  ]
-            );
-            setVariants(nextVariants);
-          }
-        } else if (Array.isArray(json?.data)) {
-          // صيغة سلة (قائمة خيارات فقط)
-          const nextGroups: OptionGroup[] = json.data.map((o: any) => ({
-            id: o.id,
-            type: (o.display_type ?? "text") as OptionGroup["type"],
-            name: o.name ?? "",
-            values: Array.isArray(o.values)
-              ? o.values.map((v: any) => ({
-                  id: v.id,
-                  label: v.name ?? "",
-                  colorHex: o.display_type === "color" ? v.display_value : undefined,
-                  imageUrl: o.display_type === "image" ? v.image_url : undefined,
-                }))
-              : [],
-          }));
-          if (alive) {
-            setEnabled(nextGroups.some((g) => g.values.length > 0));
-            setGroups(
-              nextGroups.length
-                ? nextGroups
-                : [
-                    {
-                      id: crypto.randomUUID(),
-                      type: "text",
-                      name: "مقاسات",
-                      values: [{ id: crypto.randomUUID(), label: "" }],
-                    },
-                  ]
-            );
-            setVariants([]);
-          }
-        } else {
-          if (alive) {
-            setEnabled(true);
-            setGroups([
-              {
-                id: crypto.randomUUID(),
-                type: "text",
-                name: "مقاسات",
-                values: [{ id: crypto.randomUUID(), label: "" }],
-              },
-            ]);
-            setVariants([]);
-          }
+        if (alive) {
+          setEnabled(
+            typeof json.optionsEnabled === "boolean"
+              ? json.optionsEnabled
+              : nextGroups.some((g) => g.values?.length)
+          );
+          setGroups(
+            nextGroups.length
+              ? nextGroups
+              : [
+                  {
+                    id: crypto.randomUUID(),
+                    type: "text",
+                    name: "مقاسات",
+                    values: [{ id: crypto.randomUUID(), label: "" }],
+                  },
+                ]
+          );
+          setVariants(nextVariants);
         }
       } catch {
         if (alive) {
@@ -143,21 +136,14 @@ export default function OptionsQuantityDialog({
       } finally {
         if (alive) setLoading(false);
       }
-    }
-    fetchOptions();
+    })();
     return () => {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product.id]);
 
-  React.useEffect(() => {
-    const onEsc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onEsc);
-    return () => window.removeEventListener("keydown", onEsc);
-  }, [onClose]);
-
-  // ------- تعديل/إضافة/حذف المجموعات والقيم -------
+  /* ----------------- Mutations ----------------- */
   function addGroup() {
     if (!enabled) setEnabled(true);
     setGroups((g) => [
@@ -203,7 +189,7 @@ export default function OptionsQuantityDialog({
     );
   }
 
-  // ------- توليد المتغيرات: لكل مجموعة لوحدها (بدون دمج) -------
+  /* ----------------- Variants logic (per-group) ----------------- */
   function cartesian<T>(arrays: T[][]): T[][] {
     if (!arrays.length) return [];
     return arrays.reduce<T[][]>((acc, curr) => {
@@ -216,7 +202,10 @@ export default function OptionsQuantityDialog({
 
   function recomputeVariants() {
     const usable = groups
-      .map((g) => ({ ...g, values: g.values.filter((v) => v.label.trim() !== "") }))
+      .map((g) => ({
+        ...g,
+        values: g.values.filter((v) => v.label.trim() !== ""),
+      }))
       .filter((g) => g.values.length > 0);
 
     if (!enabled || usable.length === 0) {
@@ -225,16 +214,17 @@ export default function OptionsQuantityDialog({
     }
 
     if (!combineOptions) {
-      // flat per-group (بدون دمج)
+      // لكل قيمة سطر مستقل (بدون دمج)
       setVariants((prev) => {
-        const prevMap = new Map(prev.map((v) => [v.optionValueIds.join("|"), v]));
-        const flatValues = usable.flatMap((g) => g.values.map((v) => v.id));
-
-        return flatValues.map((valId) => {
-          const old = prevMap.get(valId);
+        const prevMap = new Map(
+          prev.map((v) => [v.optionValueIds.join("|"), v])
+        );
+        const ids = usable.flatMap((g) => g.values.map((v) => v.id));
+        return ids.map((id) => {
+          const old = prevMap.get(id);
           return {
             id: old?.id ?? crypto.randomUUID(),
-            optionValueIds: [valId],
+            optionValueIds: [id],
             sku: old?.sku ?? "",
             qty: old?.qty ?? 0,
           };
@@ -267,33 +257,32 @@ export default function OptionsQuantityDialog({
     enabled,
     combineOptions,
     JSON.stringify(
-      groups.map((g) => ({ id: g.id, v: g.values.map((x) => x.id + ":" + x.label) }))
+      groups.map((g) => ({
+        id: g.id,
+        v: g.values.map((x) => x.id + ":" + x.label),
+      }))
     ),
   ]);
 
-  // ------- صلاحية الحفظ -------
-  const hasAtLeastOneValue =
-    groups.length > 0 && groups.some((g) => g.values.filter((v) => v.label.trim() !== "").length > 0);
-
-  const invalidQtyCount = variants.filter(
+  /* ----------------- Guards ----------------- */
+  const hasAtLeastOneValue = groups.some((g) =>
+    g.values.some((v) => v.label.trim() !== "")
+  );
+  const invalidQty = variants.some(
     (v) => typeof v.qty !== "number" || (v.qty as number) < 0
-  ).length;
-
+  );
   const canSave =
-    enabled &&
-    hasAtLeastOneValue &&
-    variants.length > 0 &&
-    invalidQtyCount === 0;
+    enabled && hasAtLeastOneValue && variants.length > 0 && !invalidQty;
 
-  // ------- حفظ -------
+  /* ----------------- Save ----------------- */
   async function saveAll() {
     if (!canSave) {
       alert(
-        invalidQtyCount > 0
-          ? "الرجاء إدخال كمية صحيحة (صفر أو أكثر) لكل متغير."
-          : !hasAtLeastOneValue
+        !hasAtLeastOneValue
           ? "أضف قيمة واحدة على الأقل."
-          : "أكمل المتطلبات"
+          : invalidQty
+          ? "أدخل كمية صحيحة (صفر أو أكثر)."
+          : "أكمل الحقول."
       );
       return;
     }
@@ -304,7 +293,7 @@ export default function OptionsQuantityDialog({
         optionsEnabled: enabled,
         groups,
         variants,
-        branchId: "3f393dae-bd42-40bb-b77e-5686180d2f25", // فرع MAIN
+        branchId: "3f393dae-bd42-40bb-b77e-5686180d2f25",
       };
 
       const res = await fetch(`/api/admin/products/${product.id}/options`, {
@@ -313,26 +302,16 @@ export default function OptionsQuantityDialog({
         body: JSON.stringify(body),
       });
 
-      let rawText = "";
+      let raw = "";
       let json: any = null;
       try {
         json = await res.clone().json();
       } catch {
-        try {
-          rawText = await res.text();
-        } catch {
-          rawText = "<no body>";
-        }
+        raw = await res.text().catch(() => "<no-body>");
       }
 
-      if (!res.ok || json?.error || json?.success === false) {
-        console.error("PATCH /api/admin/products/[id]/options failed →", {
-          status: res.status,
-          json,
-          rawText,
-        });
-        const msg =
-          json?.detail || json?.error || rawText || `PATCH failed with ${res.status}`;
+      if (!res.ok || json?.success === false || json?.error) {
+        const msg = json?.detail || json?.error || raw || `PATCH ${res.status}`;
         alert(`تعذّر الحفظ:\n${msg}`);
         return;
       }
@@ -340,66 +319,61 @@ export default function OptionsQuantityDialog({
       onSaved({ optionsEnabled: enabled, options: groups, variants });
       onClose();
     } catch (e: any) {
-      console.error("PATCH /options exception →", e);
       alert(`تعذّر الحفظ (استثناء):\n${e?.message || e}`);
     } finally {
       setSaving(false);
     }
   }
 
-  // --------- Helpers UI ---------
-  function getLabelForVariant(v: VariantRow) {
-    // قيمة واحدة في وضع عدم الدمج → نرجع label مباشرة
+  /* ----------------- UI helpers ----------------- */
+  function variantLabel(v: VariantRow) {
+    if (!v.optionValueIds?.length) return "متغير";
     const id = v.optionValueIds[0];
     for (const g of groups) {
-      const val = g.values.find((x) => x.id === id);
-      if (val) return val.label || "قيمة";
+      const found = g.values.find((x) => x.id === id);
+      if (found) return found.label || "متغير";
     }
-    // وضع الدمج: نجمع القيم
+    // لو دمج: نعرض جميع القيم
     const parts: string[] = [];
-    for (const valId of v.optionValueIds) {
+    for (const vid of v.optionValueIds) {
       for (const g of groups) {
-        const val = g.values.find((x) => x.id === valId);
+        const val = g.values.find((x) => x.id === vid);
         if (val) {
           parts.push(val.label);
           break;
         }
       }
     }
-    return parts.filter(Boolean).join(" — ");
+    return parts.join(" — ");
   }
 
+  /* ----------------- Render ----------------- */
   return (
     <div className="fixed inset-0 z-[999] grid place-items-center bg-black/50 backdrop-blur-md p-4">
-      <div className="w-full max-w-4xl rounded-2xl border border-white/20 bg-white/80 shadow-[0_20px_60px_-10px_rgba(0,0,0,.35)] ring-1 ring-black/5 supports-[backdrop-filter]:bg-white/60">
+      <div className="w-full max-w-4xl rounded-2xl border border-white/20 bg-white/90 shadow-xl ring-1 ring-black/5">
         {/* Header */}
-        <div className="flex items-center justify-between gap-3 border-b border-white/30 bg-gradient-to-l from-teal-600/10 via-sky-500/10 to-fuchsia-500/10 px-5 py-4">
-          <h3 className="m-0 text-base font-extrabold tracking-tight">
-            <span className="bg-gradient-to-l from-teal-600 via-sky-600 to-fuchsia-600 bg-clip-text text-transparent">
-              الخيارات والكمية
-            </span>{" "}
-            — <span className="text-zinc-800">{product.name}</span>
+        <div className="flex items-center justify-between gap-3 border-b border-zinc-200/70 px-5 py-3">
+          <h3 className="m-0 text-base font-bold text-zinc-800">
+            إدارة الكميات —{" "}
+            <span className="text-teal-700">{product.name}</span>
           </h3>
-          <div className="flex items-center gap-2">
-            {loading && <span className="text-xs text-zinc-500">جاري التحميل…</span>}
-            {saving && <span className="text-xs text-teal-700">جاري الحفظ…</span>}
-            <button
-              className="rounded-xl border border-zinc-200/60 bg-white/80 px-3 py-1.5 text-sm hover:bg-zinc-50/80 transition-colors"
-              onClick={onClose}
-            >
-              إغلاق
-            </button>
-          </div>
+          <button
+            className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
+            onClick={onClose}
+          >
+            إغلاق
+          </button>
         </div>
 
         {/* Body */}
-        <div className="max-h-[80vh] overflow-y-auto px-5 py-4 scroll-smooth">
-          <div className="mb-4 rounded-xl border border-sky-200/60 bg-sky-50/80 px-3.5 py-2.5 text-[13px] text-sky-900 shadow-sm">
+        <div className="max-h-[80vh] overflow-y-auto px-5 py-4">
+          <section className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-3.5 py-2.5 text-[13px] text-sky-900">
             بإمكانك إدارة الكمية بناءً على خيارات المنتج.
-          </div>
+          </section>
 
-          <div className="mb-5 flex items-center justify-between rounded-xl border border-zinc-200/70 bg-white/70 px-4 py-3 shadow-sm">
-            <span className="text-sm font-semibold text-zinc-800">
+          {/* Toggle enable */}
+          <div className="mb-4 flex items-center justify-between rounded-xl border border-zinc-200 bg-white px-4 py-2.5">
+            <span className="text-sm font-medium text-zinc-800">
               تفعيل خيارات المنتج
             </span>
             <label className="relative inline-flex cursor-pointer items-center select-none">
@@ -409,22 +383,25 @@ export default function OptionsQuantityDialog({
                 checked={enabled}
                 onChange={(e) => setEnabled(e.target.checked)}
               />
-              <span className="me-3 text-xs text-zinc-500 peer-checked:text-teal-700 transition-colors">
+              <span className="me-3 text-xs text-zinc-500 peer-checked:text-teal-700">
                 {enabled ? "مفعّل" : "معطّل"}
               </span>
-              <span className="h-7 w-12 rounded-full bg-zinc-300/70 peer-checked:bg-teal-500/80 transition-colors relative shadow-inner">
-                <span className="absolute top-1 left-1 h-5 w-5 rounded-full bg-white shadow ring-1 ring-black/5 transition-all peer-checked:left-6" />
+              <span className="h-6 w-10 rounded-full bg-zinc-300 peer-checked:bg-teal-500 relative">
+                <span className="absolute top-1 left-1 h-4 w-4 rounded-full bg-white shadow transition-all peer-checked:left-5" />
               </span>
             </label>
           </div>
 
-          {/* تبديل نمط الدمج */}
-          <div className="mb-4 flex items-center justify-between rounded-xl border border-zinc-200/70 bg-white/70 px-4 py-2.5">
+          {/* Mode switch */}
+          <div className="mb-4 flex items-center justify-between rounded-xl border border-zinc-200 bg-white px-4 py-2.5">
             <span className="text-[13px] text-zinc-700">
-              نمط المتغيرات: {combineOptions ? "دمج كل الخيارات" : "قائمة لكل خيار (بدون دمج)"}
+              نمط المتغيرات:{" "}
+              <strong>
+                {combineOptions ? "دمج كل الخيارات" : "لكل خيار قائمة مستقلة"}
+              </strong>
             </span>
             <button
-              className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs hover:bg-zinc-50"
+              className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs hover:bg-zinc-50"
               onClick={() => setCombineOptions((x) => !x)}
               type="button"
             >
@@ -432,16 +409,17 @@ export default function OptionsQuantityDialog({
             </button>
           </div>
 
-          {/* المجموعات */}
-          <div className="space-y-4">
+          {/* Groups */}
+          <div className="space-y-5">
             {groups.map((g) => (
               <div
                 key={g.id}
-                className="rounded-2xl border border-zinc-200/70 bg-white/80 p-4 shadow-sm transition hover:shadow-md"
+                className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm"
               >
-                <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-[140px_1fr_44px]">
+                {/* عنوان ومعرّف النوع */}
+                <div className="mb-3 grid grid-cols-1 gap-2 md:grid-cols-[140px_1fr_44px]">
                   <select
-                    className="rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500/40 transition"
+                    className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm"
                     value={g.type}
                     onChange={(e) =>
                       patchGroup(g.id, {
@@ -455,8 +433,8 @@ export default function OptionsQuantityDialog({
                   </select>
 
                   <input
-                    className="rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none placeholder:text-zinc-400 focus:ring-2 focus:ring-teal-500/40 transition"
-                    placeholder="مسمى الخيار (مثل مقاسات)"
+                    className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm"
+                    placeholder="مسمى الخيار (مثال: مقاسات)"
                     value={g.name}
                     onChange={(e) => patchGroup(g.id, { name: e.target.value })}
                   />
@@ -464,12 +442,27 @@ export default function OptionsQuantityDialog({
                   <button
                     title="حذف الخيار"
                     onClick={() => removeGroup(g.id)}
-                    className="grid place-items-center rounded-xl border border-rose-200/70 bg-white/80 p-2 text-rose-700 hover:bg-rose-50/80 transition"
+                    className="grid place-items-center rounded-lg border border-rose-200 bg-white p-2 text-rose-700 hover:bg-rose-50"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
                 </div>
 
+                {/* قائمة القيم كـ Badges + إدخال */}
+                <div className="mb-3 flex flex-wrap gap-2">
+                  {g.values
+                    .filter((v) => v.label.trim() !== "")
+                    .map((v) => (
+                      <Badge
+                        key={v.id}
+                        onRemove={() => removeValue(g.id, v.id)}
+                      >
+                        {v.label}
+                      </Badge>
+                    ))}
+                </div>
+
+                {/* إدخال قيمة جديدة + حقول النوع */}
                 <ValuesEditor
                   group={g}
                   onAdd={(label) => addValue(g.id, label)}
@@ -494,84 +487,78 @@ export default function OptionsQuantityDialog({
 
             <button
               onClick={addGroup}
-              className="w-full rounded-2xl border border-zinc-200/70 bg-white/80 py-2.5 text-sm font-medium text-zinc-800 hover:bg-zinc-50/80 shadow-sm transition"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-200 bg-white py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50"
             >
-              + إضافة خيار جديد
+              <Plus className="h-4 w-4" />
+              إضافة خيار جديد
             </button>
           </div>
 
-          {/* المتغيرات الناتجة */}
+          {/* Variants */}
           {enabled && variants.length > 0 && (
-            <div className="mt-5 overflow-hidden rounded-2xl border border-zinc-200/70 bg-white/80 shadow-sm">
-              <div className="border-b border-zinc-200/70 bg-gradient-to-l from-zinc-50 to-white px-4 py-2.5 text-sm font-bold text-zinc-700">
+            <div className="mt-6 rounded-2xl border border-zinc-200 bg-white shadow-sm">
+              <div className="border-b border-zinc-200 px-4 py-2.5 text-sm font-bold text-zinc-700">
                 المتغيرات الناتجة
               </div>
-              <div className="max-h-[40vh] overflow-y-auto">
-                <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/60">
-                    <tr className="border-b border-zinc-200/70 text-zinc-600">
-                      <th className="px-3 py-2 text-start font-semibold">المتغير</th>
-                      <th className="px-3 py-2 text-start font-semibold">SKU</th>
-                      <th className="px-3 py-2 text-start font-semibold">الكمية</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {variants.map((v) => {
-                      const label = getLabelForVariant(v) || "متغير";
-                      return (
-                        <tr
-                          key={v.id}
-                          className="border-b border-zinc-100/80 odd:bg-white/60 even:bg-zinc-50/40"
-                        >
-                          <td className="px-3 py-2 text-zinc-800">{label}</td>
-                          <td className="px-3 py-2">
-                            <input
-                              className="w-full rounded-lg border border-zinc-200/70 bg-white/80 px-2.5 py-1.5 text-sm outline-none placeholder:text-zinc-400 focus:ring-2 focus:ring-teal-500/40 transition"
-                              value={v.sku ?? ""}
-                              onChange={(e) =>
-                                setVariants((arr) =>
-                                  arr.map((x) =>
-                                    x.id === v.id ? { ...x, sku: e.target.value } : x
-                                  )
-                                )
-                              }
-                            />
-                          </td>
-                          <td className="px-3 py-2">
-                            <input
-                              inputMode="numeric"
-                              className="w-28 rounded-lg border border-zinc-200/70 bg-white/80 px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-teal-500/40 transition"
-                              value={v.qty ?? 0}
-                              onChange={(e) =>
-                                setVariants((arr) =>
-                                  arr.map((x) =>
-                                    x.id === v.id
-                                      ? {
-                                          ...x,
-                                          qty:
-                                            e.target.value === ""
-                                              ? 0
-                                              : +e.target.value,
-                                        }
-                                      : x
-                                  )
-                                )
-                              }
-                            />
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+              <div className="divide-y divide-zinc-100">
+                {variants.map((v) => (
+                  <div
+                    key={v.id}
+                    className="grid grid-cols-1 gap-3 px-4 py-3 md:grid-cols-[1fr_220px_160px]"
+                  >
+                    <div className="flex items-center text-sm text-zinc-800">
+                      {variantLabel(v)}
+                    </div>
+
+                    <div className="flex items-center">
+                      <input
+                        className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-sm outline-none placeholder:text-zinc-400 focus:ring-2 focus:ring-teal-500/30"
+                        placeholder="SKU (اختياري)"
+                        value={v.sku ?? ""}
+                        onChange={(e) =>
+                          setVariants((arr) =>
+                            arr.map((x) =>
+                              x.id === v.id ? { ...x, sku: e.target.value } : x
+                            )
+                          )
+                        }
+                      />
+                    </div>
+
+                    <div className="flex items-center">
+                      <input
+                        inputMode="numeric"
+                        className="w-28 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-teal-500/30"
+                        placeholder="0"
+                        value={v.qty ?? 0}
+                        onChange={(e) =>
+                          setVariants((arr) =>
+                            arr.map((x) =>
+                              x.id === v.id
+                                ? {
+                                    ...x,
+                                    qty:
+                                      e.target.value === ""
+                                        ? 0
+                                        : +e.target.value,
+                                  }
+                                : x
+                            )
+                          )
+                        }
+                      />
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}
 
-          <div className="mt-5 flex justify-end gap-2">
+          {/* Actions */}
+          <div className="mt-6 flex justify-end gap-2">
             <button
               onClick={onClose}
-              className="rounded-xl border border-zinc-200/70 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50/80 shadow-sm transition"
+              className="rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm"
               type="button"
             >
               إلغاء
@@ -579,7 +566,7 @@ export default function OptionsQuantityDialog({
             <button
               onClick={saveAll}
               disabled={saving || !canSave}
-              className="rounded-xl bg-gradient-to-l from-teal-600 to-sky-600 px-6 py-2 text-sm font-semibold text-white shadow hover:brightness-[1.05] active:brightness-95 transition disabled:opacity-60"
+              className="rounded-lg bg-teal-600 px-5 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
               type="button"
             >
               {saving ? "جارٍ الحفظ..." : "حفظ"}
@@ -591,6 +578,9 @@ export default function OptionsQuantityDialog({
   );
 }
 
+/* —————————————————————————————————————
+    Values Editor
+————————————————————————————————————— */
 function ValuesEditor({
   group,
   onAdd,
@@ -609,58 +599,11 @@ function ValuesEditor({
 
   return (
     <div className="space-y-3">
-      {group.values.map((v) => (
-        <div
-          key={v.id}
-          className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_140px_1fr_44px] items-center"
-        >
-          <input
-            className="rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none placeholder:text-zinc-400 focus:ring-2 focus:ring-teal-500/40 transition"
-            placeholder="القيمة (مثال: 50)"
-            value={v.label}
-            onChange={(e) => onPatchValue(v.id, { label: e.target.value })}
-          />
-
-          {group.type === "color" ? (
-            <input
-              type="color"
-              className="h-10 w-full rounded-xl border border-zinc-200/70 bg-white/80 p-1"
-              value={v.colorHex ?? "#ffffff"}
-              onChange={(e) => onPatchValue(v.id, { colorHex: e.target.value })}
-            />
-          ) : (
-            <div className="hidden sm:block text-center text-xs text-zinc-400">
-              —
-            </div>
-          )}
-
-          {group.type === "image" ? (
-            <input
-              className="rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none placeholder:text-zinc-400 focus:ring-2 focus:ring-teal-500/40 transition"
-              placeholder="رابط صورة"
-              value={v.imageUrl ?? ""}
-              onChange={(e) => onPatchValue(v.id, { imageUrl: e.target.value })}
-            />
-          ) : (
-            <div className="hidden sm:block text-center text-xs text-zinc-400">
-              —
-            </div>
-          )}
-
-          <button
-            title="حذف القيمة"
-            onClick={() => onRemove(v.id)}
-            className="grid place-items-center rounded-xl border border-rose-200/70 bg-white/80 p-2 text-rose-700 hover:bg-rose-50/80 transition"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
-        </div>
-      ))}
-
+      {/* إدخال قيمة جديدة */}
       <div className="grid grid-cols-[1fr_auto] gap-2">
         <input
-          className="rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none placeholder:text-zinc-400 focus:ring-2 focus:ring-teal-500/40 transition"
-          placeholder="إضافة قيمة جديدة"
+          className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none placeholder:text-zinc-400 focus:ring-2 focus:ring-teal-500/30"
+          placeholder="إضافة قيمة جديدة (مثل: 50)"
           value={valLabel}
           onChange={(e) => setValLabel(e.target.value)}
           onKeyDown={(e) => {
@@ -676,11 +619,44 @@ function ValuesEditor({
             onAdd(valLabel.trim());
             setValLabel("");
           }}
-          className="rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50/80 shadow-sm transition"
+          className="inline-flex items-center justify-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+          type="button"
         >
-          + إضافة
+          <Plus className="h-4 w-4" />
+          إضافة
         </button>
       </div>
+
+      {/* حقول النوع الإضافية */}
+      {group.type === "color" && (
+        <div className="text-xs text-zinc-500">
+          استخدم منتقي اللون لكل قيمة بعد إضافتها (يظهر على البادج عند الدعم).
+        </div>
+      )}
+      {group.type === "image" && (
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+          {group.values.map((v) => (
+            <div key={v.id} className="grid grid-cols-[1fr_auto] gap-2">
+              <input
+                className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm"
+                placeholder={`رابط صورة (${v.label || "قيمة"})`}
+                value={v.imageUrl ?? ""}
+                onChange={(e) =>
+                  onPatchValue(v.id, { imageUrl: e.target.value })
+                }
+              />
+              <button
+                className="rounded-lg border border-rose-200 bg-white px-2 text-rose-700 hover:bg-rose-50"
+                title="حذف القيمة"
+                onClick={() => onRemove(v.id)}
+                type="button"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
