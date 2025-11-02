@@ -1,405 +1,180 @@
-// src/app/api/admin/products/[id]/options/route.ts
+// src/app/api/admin/products/[id]/images/route.ts
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { createServerClient } from "@/lib/supabase/server";
+import createServerSupabase, { createServiceRoleSupabase } from "@/lib/supabase/server";
 
-// ===== Schemas =====
-const ValueSchema = z.object({
-  id: z.string().min(1),
-  label: z.string().min(1),
-  colorHex: z.string().optional(),
-  imageUrl: z.string().url().optional(),
-});
+const BUCKET = "products"; // تأكد أن البكت موجود ومفعل Public
 
-const GroupSchema = z.object({
-  id: z.string().min(1),
-  type: z.enum(["text", "color", "image"]),
-  name: z.string().min(1),
-  values: z.array(ValueSchema),
-});
-
-const VariantSchema = z.object({
-  id: z.string().min(1),
-  optionValueIds: z.array(z.string().min(1)).nonempty(),
-  sku: z.string().optional().default(""),
-  qty: z.number().int().min(0).default(0),
-});
-
-const SaveSchema = z.object({
-  optionsEnabled: z.boolean().optional(),
-  groups: z.array(GroupSchema),
-  variants: z.array(VariantSchema),
-  branchId: z.string().uuid().optional(),
-});
-
-// ===== Helpers =====
-function displayTypeOf(t: "text" | "color" | "image") {
-  return t;
+function extOf(name: string) {
+  const e = (name.split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "");
+  return e || "bin";
 }
-function valueDisplayOf(
-  groupType: "text" | "color" | "image",
-  val: z.infer<typeof ValueSchema>
-) {
-  if (groupType === "color") return val.colorHex ?? null;
-  if (groupType === "image") return val.imageUrl ?? null;
-  return null;
+function storagePath(productId: string, fname: string) {
+  // لا نكرر اسم البكت داخل المسار
+  return `${productId}/${fname}`;
 }
-async function getOrFirstBranchId(
-  supabase: SupabaseClient,
-  preferred?: string | null
-) {
-  if (preferred) return preferred;
-  const { data, error } = await supabase
-    .from("branches")
-    .select("id")
-    .order("created_at", { ascending: true })
-    .limit(1);
-  if (error) throw error;
-  if (!data?.length)
-    throw new Error("No branches found. Create a branch or pass branchId.");
-  return data[0].id as string;
-}
-function buildVariantLabel(
-  orderGroups: Array<{ name: string; values: Array<{ id: string; label: string }> }>,
-  ids: string[]
-) {
-  const parts: string[] = [];
-  ids.forEach((valId, idx) => {
-    const g = orderGroups[idx];
-    if (!g) return;
-    const v = g.values.find((x) => x.id === valId);
-    if (!v) return;
-    parts.push(`${g.name || "خيار"}: ${v.label}`);
-  });
-  return parts.join(" — ");
-}
+const ok = (data: any, status = 200) => NextResponse.json({ success: true, status, data }, { status });
+const fail = (error: string, status = 400, meta?: any) =>
+  NextResponse.json({ success: false, status, error, meta }, { status });
 
-// ===== GET =====
-export async function GET(
-  _req: NextRequest,
-  ctx: { params: Promise<{ id: string }> }
-) {
-  const { id: productId } = await ctx.params;
-  if (!productId)
-    return NextResponse.json({ error: "Missing product id" }, { status: 400 });
+/** GET: قائمة صور المنتج — نقرأ بـ Service-Role لتجاوز RLS */
+export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  try {
+    const adminRead = createServiceRoleSupabase(); // ✅ مهم للعرض
+    const { id: product_id } = await ctx.params;
 
-  const supabase = await createServerClient();
-
-  const { data: optGroups, error: gErr } = await supabase
-    .from("product_options")
-    .select("id, name, display_type, type, sort_order")
-    .eq("product_id", productId)
-    .order("sort_order", { ascending: true });
-  if (gErr) return NextResponse.json({ error: gErr.message }, { status: 500 });
-
-  const groupIds = (optGroups ?? []).map((g) => g.id);
-  let valuesByGroup = new Map<string, any[]>();
-  if (groupIds.length) {
-    const { data: vals, error: vErr } = await supabase
-      .from("product_option_values")
-      .select("id, option_id, name, display_value, sort_order")
-      .in("option_id", groupIds)
+    const { data, error } = await adminRead
+      .from("product_images")
+      .select("id,url,alt,is_primary,sort_order,type,video_url,three_d_image_url")
+      .eq("product_id", product_id)
       .order("sort_order", { ascending: true });
-    if (vErr) return NextResponse.json({ error: vErr.message }, { status: 500 });
 
-    valuesByGroup = groupIds.reduce((m, gid) => {
-      const g = optGroups?.find((gg) => gg.id === gid);
-      m.set(
-        gid,
-        (vals ?? [])
-          .filter((v) => v.option_id === gid)
-          .map((v) => ({
-            id: v.id,
-            label: v.name,
-            colorHex: g?.display_type === "color" ? v.display_value : undefined,
-            imageUrl: g?.display_type === "image" ? v.display_value : undefined,
-          }))
-      );
-      return m;
-    }, new Map<string, any[]>());
+    if (error) return fail(error.message, 500, { where: "select/product_images" });
+    return ok(data ?? []);
+  } catch (e: any) {
+    return fail(e?.message || "fetch images failed", 500);
   }
-
-  const { data: vars, error: varErr } = await supabase
-    .from("product_variants")
-    .select("id, sku, status, created_at")
-    .eq("product_id", productId)
-    .order("created_at", { ascending: true });
-  if (varErr) return NextResponse.json({ error: varErr.message }, { status: 500 });
-
-  const variantIds = (vars ?? []).map((v) => v.id);
-  let byVariantVals = new Map<string, string[]>();
-  if (variantIds.length) {
-    const { data: links, error: lErr } = await supabase
-      .from("variant_option_values")
-      .select("variant_id, option_value_id")
-      .in("variant_id", variantIds);
-    if (lErr) return NextResponse.json({ error: lErr.message }, { status: 500 });
-    links?.forEach((l) => {
-      const arr = byVariantVals.get(l.variant_id) ?? [];
-      arr.push(l.option_value_id);
-      byVariantVals.set(l.variant_id, arr);
-    });
-  }
-
-  let qtyByVariant = new Map<string, number>();
-  if (variantIds.length) {
-    const { data: inv } = await supabase
-      .from("variant_inventory")
-      .select("variant_id, qty_on_hand");
-    inv?.forEach((r) => {
-      const prev = qtyByVariant.get(r.variant_id) ?? 0;
-      qtyByVariant.set(r.variant_id, prev + (r.qty_on_hand ?? 0));
-    });
-  }
-
-  const groups = (optGroups ?? []).map((g) => ({
-    id: g.id,
-    type: (g.display_type as "text" | "color" | "image") ?? "text",
-    name: g.name,
-    values: valuesByGroup.get(g.id) ?? [],
-  }));
-
-  const groupsForLabel = groups.map((g) => ({
-    name: g.name,
-    values: g.values.map((v) => ({ id: v.id, label: v.label })),
-  }));
-
-  const variants = (vars ?? []).map((v) => {
-    const valueIds = byVariantVals.get(v.id) ?? [];
-    const label = buildVariantLabel(groupsForLabel, valueIds);
-    return {
-      id: v.id,
-      optionValueIds: valueIds,
-      sku: v.sku ?? "",
-      qty: qtyByVariant.get(v.id) ?? 0,
-      label,
-    };
-    });
-
-  const enabled =
-    groups.length > 0 &&
-    groups.some((g) => g.values.length > 0) &&
-    variants.length > 0;
-
-  return NextResponse.json({ optionsEnabled: enabled, groups, variants });
 }
 
-// ===== POST / PATCH =====
-export async function POST(
-  req: NextRequest,
-  ctx: { params: Promise<{ id: string }> }
-) {
-  const { id: productId } = await ctx.params;
-  if (!productId)
-    return NextResponse.json({ error: "Missing product id" }, { status: 400 });
+/** POST: رفع صور متعددة. ندخلها كلها is_primary=false ثم نعين واحدة أساسية إن لم توجد أساسًا. */
+export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  try {
+    const { id: product_id } = await ctx.params;
+    const supa = await createServerSupabase(); // read
+    const admin = createServiceRoleSupabase(); // write + storage
 
-  const json = await req.json();
-  const parsed = SaveSchema.safeParse(json);
-  if (!parsed.success)
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    // تأكد وجود المنتج
+    const { data: p, error: e0 } = await supa.from("products").select("id").eq("id", product_id).maybeSingle();
+    if (e0) return fail(e0.message, 400, { where: "exists/products" });
+    if (!p?.id) return fail("المنتج غير موجود", 404);
 
-  const { optionsEnabled, groups, variants, branchId: preferredBranch } =
-    parsed.data;
+    const form = await req.formData();
+    const files = form.getAll("files") as File[];
+    const alts = form.getAll("alts").map((v) => String(v));
+    if (!files?.length) return fail("no files[] provided", 400);
 
-  const supabase = await createServerClient();
-  const branchId = await getOrFirstBranchId(supabase, preferredBranch ?? null);
-
-  // === product_options
-  const optionIdMap = new Map<string, string>();
-  const { data: existingOptions, error: eoErr } = await supabase
-    .from("product_options")
-    .select("id, name, display_type, sort_order")
-    .eq("product_id", productId);
-  if (eoErr) return NextResponse.json({ error: eoErr.message }, { status: 500 });
-
-  for (let idx = 0; idx < groups.length; idx++) {
-    const g = groups[idx];
-    const display_type = displayTypeOf(g.type);
-    let dbId = existingOptions?.find((o) => o.id === g.id)?.id;
-
-    if (!dbId) {
-      const { data: ins, error: insErr } = await supabase
-        .from("product_options")
-        .insert({
-          id: g.id,
-          product_id: productId,
-          name: g.name,
-          display_type,
-          type: "radio",
-          sort_order: idx,
-        })
-        .select("id")
-        .single();
-      if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
-      dbId = ins.id;
-    } else {
-      const { error: updErr } = await supabase
-        .from("product_options")
-        .update({
-          name: g.name,
-          display_type,
-          type: "radio",
-          sort_order: idx,
-        })
-        .eq("id", dbId);
-      if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
-    }
-    optionIdMap.set(g.id, dbId);
-  }
-
-  // === product_option_values
-  const valueIdMap = new Map<string, string>();
-  const { data: exVals, error: exValsErr } = await supabase
-    .from("product_option_values")
-    .select("id, option_id, name, display_value, sort_order");
-  if (exValsErr) return NextResponse.json({ error: exValsErr.message }, { status: 500 });
-  const existingValues = exVals ?? [];
-
-  for (const g of groups) {
-    const dbOptionId = optionIdMap.get(g.id)!;
-    for (let vidx = 0; vidx < g.values.length; vidx++) {
-      const v = g.values[vidx];
-      const display_value = valueDisplayOf(g.type, v);
-      let dbValId = existingValues.find(
-        (ev) => ev.id === v.id && ev.option_id === dbOptionId
-      )?.id;
-
-      if (!dbValId) {
-        const { data: insV, error: insVErr } = await supabase
-          .from("product_option_values")
-          .insert({
-            id: v.id,
-            option_id: dbOptionId,
-            name: v.label,
-            display_value,
-            sort_order: vidx,
-            is_default: false,
-            extra_price: 0,
-          })
-          .select("id")
-          .single();
-        if (insVErr) return NextResponse.json({ error: insVErr.message }, { status: 500 });
-        dbValId = insV.id;
-      } else {
-        const { error: updVErr } = await supabase
-          .from("product_option_values")
-          .update({
-            name: v.label,
-            display_value,
-            sort_order: vidx,
-          })
-          .eq("id", dbValId);
-        if (updVErr) return NextResponse.json({ error: updVErr.message }, { status: 500 });
-      }
-      valueIdMap.set(v.id, dbValId);
-    }
-  }
-
-  // === product_variants + links + inventory
-  const { data: existingVariants, error: evErr } = await supabase
-    .from("product_variants")
-    .select("id")
-    .eq("product_id", productId);
-  if (evErr) return NextResponse.json({ error: evErr.message }, { status: 500 });
-
-  async function resetVariantLinks(variantId: string) {
-    const { error } = await supabase
-      .from("variant_option_values")
-      .delete()
-      .eq("variant_id", variantId);
-    if (error) throw error;
-  }
-  async function upsertInventory(variantId: string, qty: number) {
-    const { data: inv, error: invErr } = await supabase
-      .from("variant_inventory")
-      .select("id, qty_on_hand")
-      .eq("variant_id", variantId)
-      .eq("branch_id", branchId)
+    // آخر ترتيب حالي
+    const { data: curMax } = await supa
+      .from("product_images")
+      .select("sort_order")
+      .eq("product_id", product_id)
+      .order("sort_order", { ascending: false })
+      .limit(1)
       .maybeSingle();
-    if (invErr) throw invErr;
+    let order = (curMax?.sort_order ?? -1) + 1;
 
-    if (!inv) {
-      const { error: insInvErr } = await supabase.from("variant_inventory").insert({
-        variant_id: variantId,
-        branch_id: branchId,
-        qty_on_hand: qty ?? 0,
-        qty_reserved: 0,
+    // نرفع ونجهز صفوف الإدراج (كلها is_primary=false)
+    const rows: any[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const ext = extOf(f.name);
+      const fname = `gallery-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+      const path = storagePath(product_id, fname);
+
+      const buf = Buffer.from(await f.arrayBuffer());
+      const { error: upErr } = await admin.storage
+        .from(BUCKET)
+        .upload(path, buf, { upsert: true, contentType: f.type || "application/octet-stream" });
+      if (upErr) return fail(upErr.message, 500, { where: "storage/upload" });
+
+      const { data: pub } = admin.storage.from(BUCKET).getPublicUrl(path);
+
+      rows.push({
+        product_id,
+        url: pub.publicUrl,
+        alt: alts[i] ? alts[i] : null,
+        is_primary: false,       // ⛳️ لا نعيّن الأساسية أثناء الإدراج
+        sort_order: order++,
+        type: "image",
+        video_url: null,
+        three_d_image_url: null,
       });
-      if (insInvErr) throw insInvErr;
-    } else {
-      const { error: updInvErr } = await supabase
-        .from("variant_inventory")
-        .update({ qty_on_hand: qty ?? 0 })
-        .eq("id", inv.id);
-      if (updInvErr) throw updInvErr;
     }
-  }
 
-  for (const v of variants) {
-    let dbVarId = existingVariants?.find((ev) => ev.id === v.id)?.id;
-    if (!dbVarId) {
-      const { data: insVar, error: insVarErr } = await supabase
-        .from("product_variants")
-        .insert({
-          id: v.id,
-          product_id: productId,
-          sku: v.sku ?? "",
-          status: "active",
-        })
+    // إدراج الصفوف
+    const { data: inserted, error: insErr } = await admin
+      .from("product_images")
+      .insert(rows)
+      .select("id,url,alt,is_primary,sort_order,type");
+    if (insErr) return fail(insErr.message, 500, { where: "insert/product_images" });
+
+    // بعد الإدراج: إن لم توجد أساسية، حاول تعيين أول صورة الآن كأساسية
+    let hasPrimary = false;
+    {
+      const { data: curP } = await supa
+        .from("product_images")
         .select("id")
-        .single();
-      if (insVarErr) return NextResponse.json({ error: insVarErr.message }, { status: 500 });
-      dbVarId = insVar.id;
-    } else {
-      const { error: updVarErr } = await supabase
-        .from("product_variants")
-        .update({ sku: v.sku ?? "" })
-        .eq("id", dbVarId);
-      if (updVarErr) return NextResponse.json({ error: updVarErr.message }, { status: 500 });
+        .eq("product_id", product_id)
+        .eq("is_primary", true)
+        .limit(1)
+        .maybeSingle();
+      hasPrimary = !!curP?.id;
     }
 
-    await resetVariantLinks(dbVarId);
-
-    for (const uiValId of v.optionValueIds) {
-      const actualValId = valueIdMap.get(uiValId);
-      if (!actualValId) {
-        return NextResponse.json(
-          { error: `Option value not found mapping for ${uiValId}` },
-          { status: 400 }
-        );
-      }
-      const { error: linkErr } = await supabase
-        .from("variant_option_values")
-        .insert({ variant_id: dbVarId, option_value_id: actualValId });
-      if (linkErr) return NextResponse.json({ error: linkErr.message }, { status: 500 });
+    if (!hasPrimary && inserted && inserted.length) {
+      const firstId = inserted[0].id as string;
+      await admin.from("product_images").update({ is_primary: true }).eq("id", firstId);
     }
 
-    try {
-      await upsertInventory(dbVarId, v.qty ?? 0);
-    } catch (e: any) {
-      return NextResponse.json(
-        { error: e?.message || "Inventory upsert failed" },
-        { status: 500 }
-      );
-    }
+    return ok(inserted, 201);
+  } catch (e: any) {
+    return fail(e?.message || "upload images failed", 500);
   }
-
-  const enabled =
-    (optionsEnabled ??
-      (groups.length > 0 &&
-        groups.some((g) => g.values.length > 0) &&
-        variants.length > 0)) === true;
-
-  // (اختياري) حفظ عمود في products:
-  // await supabase.from("products").update({ options_enabled: enabled }).eq("id", productId);
-
-  return NextResponse.json({
-    ok: true,
-    optionsEnabled: enabled,
-    message: "Product options & variants saved successfully.",
-  });
 }
 
-// اجعل PATCH يوجّه لنفس منطق POST
-export const PATCH = POST;
+/** PATCH: تعيين أساسية + ترتيب */
+export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  try {
+    const { id: product_id } = await ctx.params;
+    const admin = createServiceRoleSupabase();
+
+    const body = (await req.json()) as { primaryId?: string; order?: string[] };
+
+    if (body.primaryId) {
+      await admin.from("product_images").update({ is_primary: false }).eq("product_id", product_id);
+      await admin.from("product_images").update({ is_primary: true }).eq("id", body.primaryId);
+    }
+
+    if (Array.isArray(body.order)) {
+      for (let i = 0; i < body.order.length; i++) {
+        await admin.from("product_images").update({ sort_order: i }).eq("id", body.order[i]);
+      }
+    }
+
+    return ok({ done: true });
+  } catch (e: any) {
+    return fail(e?.message || "patch images failed", 500);
+  }
+}
+
+/** DELETE: حذف صورة (DB + Storage) */
+export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  try {
+    const { id: product_id } = await ctx.params;
+    const admin = createServiceRoleSupabase();
+    const body = (await req.json()) as { id: string; url?: string };
+
+    const { error: dErr } = await admin.from("product_images").delete().eq("id", body.id).eq("product_id", product_id);
+    if (dErr) return fail(dErr.message, 500, { where: "delete/product_images" });
+
+    if (body.url) {
+      try {
+        const u = new URL(body.url);
+        const idx = u.pathname.indexOf("/object/public/");
+        if (idx >= 0) {
+          const relative = u.pathname.slice(idx + "/object/public/".length); // "<bucket>/<path>"
+          const [bucket, ...rest] = relative.split("/");
+          if (bucket === BUCKET && rest.length) {
+            await admin.storage.from(BUCKET).remove([rest.join("/")]);
+          }
+        }
+      } catch {}
+    }
+
+    return ok({ id: body.id });
+  } catch (e: any) {
+    return fail(e?.message || "delete image failed", 500);
+  }
+}
