@@ -1,3 +1,4 @@
+// src/app/admin/products/_components/TaxonTagsField.tsx
 "use client";
 
 import * as React from "react";
@@ -50,19 +51,17 @@ export default function TaxonTagsField({
   placeholder?: string;
 }) {
   const [loading, setLoading] = React.useState(true);
-  const [syncing, setSyncing] = React.useState(false); // قفل أثناء الحذف/الإضافة
+  const [syncing, setSyncing] = React.useState(false);
   const [allTaxons, setAllTaxons] = React.useState<FlatTaxon[]>([]);
   const [selectedNames, setSelectedNames] = React.useState<string[]>([]);
   const [taxonIdByName, setTaxonIdByName] = React.useState<Map<string, string>>(new Map());
   const [nameByTaxonId, setNameByTaxonId] = React.useState<Map<string, string>>(new Map());
 
-  // تحميل التصنيفات + أقسام المنتج (للظهور بعد التحديث)
   React.useEffect(() => {
     let alive = true;
     (async () => {
       try {
         setLoading(true);
-
         const [flat, prodTaxons] = await Promise.all([
           fetchFlatTaxons(),
           fetchProductTaxons(productId),
@@ -110,7 +109,6 @@ export default function TaxonTagsField({
     try {
       await patchProductTaxons(productId, nextIds);
     } catch (e: any) {
-      // رجوع عن التغيير إذا فشل
       setSelectedNames(prevNames);
       alert(`❌ فشل تحديث الأقسام: ${e?.message || e}`);
     } finally {
@@ -118,17 +116,13 @@ export default function TaxonTagsField({
     }
   }
 
-  // إضافة/تغيير من MultiTagSelect
   async function handleChange(nextNames: string[]) {
-    // منع اختيار اسم غير موجود في القاعدة
     const filtered = nextNames.filter((nm) => taxonIdByName.has(nm));
     await commit(filtered);
   }
 
-  // حذف من بادج (×)
   async function handleRemove(name: string) {
-    const nextNames = selectedNames.filter((n) => n !== name);
-    await commit(nextNames);
+    await commit(selectedNames.filter((n) => n !== name));
   }
 
   if (loading) {
@@ -151,38 +145,54 @@ export default function TaxonTagsField({
         placeholder={placeholder}
       />
 
-      {/* البادجات مع زر الحذف */}
-      <div className="mt-2 flex flex-wrap gap-6">
-        {selectedNames.length === 0 ? (
-          <span className="text-xs text-zinc-500">لا توجد أقسام مرتبطة.</span>
-        ) : (
-          selectedNames.map((name) => (
-            <span
-              key={name}
-              className="inline-flex items-center gap-2 rounded-full border border-zinc-200/70 bg-zinc-50/80 px-3 py-1.5 text-[12px] text-zinc-700 shadow-sm"
-              title={name}
-            >
-              {name}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  if (!syncing) handleRemove(name);
-                }}
-                className="rounded-full p-1 text-zinc-500 transition hover:bg-zinc-100/80 disabled:opacity-50"
-                title="إزالة"
-                aria-label={`إزالة ${name}`}
-                disabled={syncing}
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </span>
-          ))
+      {/* صف واحد قابل للتمرير أفقيًا + عدّاد */}
+      <div className="mt-2 relative">
+        {selectedNames.length > 0 && (
+          <span className="absolute -top-5 end-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-600">
+            {selectedNames.length} تصنيف
+          </span>
         )}
+
+        <div
+          className="flex gap-2 overflow-x-auto no-scrollbar"
+          style={{ WebkitOverflowScrolling: "touch" }}
+        >
+          {selectedNames.length === 0 ? (
+            <span className="text-xs text-zinc-500">لا توجد أقسام مرتبطة.</span>
+          ) : (
+            selectedNames.map((name) => (
+              <span
+                key={name}
+                className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-zinc-200/70 bg-zinc-50/80 px-3 py-1.5 text-[12px] text-zinc-700 shadow-sm"
+                title={name}
+              >
+                {name}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (!syncing) handleRemove(name);
+                  }}
+                  className="rounded-full p-1 text-zinc-500 transition hover:bg-zinc-100/80 disabled:opacity-50"
+                  title="إزالة"
+                  aria-label={`إزالة ${name}`}
+                  disabled={syncing}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </span>
+            ))
+          )}
+        </div>
+
+        {/* ✅ CSS عادي بدون styled-jsx */}
+        <style>{`
+          .no-scrollbar::-webkit-scrollbar { display: none; }
+          .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        `}</style>
       </div>
 
-      {/* حالة مزامنة بسيطة */}
       {syncing && (
         <div className="mt-1 text-[11px] text-zinc-500">جارٍ تحديث الأقسام…</div>
       )}
