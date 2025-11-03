@@ -2,35 +2,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import {
-  // createServerSupabase as createSessionServerClient, // لم نعد نستخدمه هنا
-  createServiceRoleSupabase,
-} from "@/lib/supabase/server";
+import { createServiceRoleSupabase } from "@/lib/supabase/server";
 
-/* =========================
-   Schemas
-   ========================= */
+/* ===== Schemas ===== */
 const ValueSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
   colorHex: z.string().optional(),
   imageUrl: z.string().url().optional(),
 });
-
 const GroupSchema = z.object({
   id: z.string().min(1),
   type: z.enum(["text", "color", "image"]),
   name: z.string().min(1),
   values: z.array(ValueSchema),
 });
-
 const VariantSchema = z.object({
   id: z.string().min(1),
   optionValueIds: z.array(z.string().min(1)).nonempty(),
   sku: z.string().optional().nullable(),
   qty: z.number().int().min(0).default(0),
+  // السعر “اختياري” (سيمر عبر v as any)
 });
-
 const PatchBody = z.object({
   optionsEnabled: z.boolean().optional(),
   groups: z.array(GroupSchema),
@@ -38,12 +31,9 @@ const PatchBody = z.object({
   branchId: z.string().uuid().optional(),
 });
 
-/* =========================
-   Helpers
-   ========================= */
+/* ===== Helpers ===== */
 const ok = (body: any, status = 200) =>
   NextResponse.json({ status, success: true, ...body }, { status });
-
 const fail = (message: string, detail?: any, status = 500) =>
   NextResponse.json({ status, success: false, message, detail }, { status });
 
@@ -70,28 +60,22 @@ function autoSku(productId: string, index: number) {
   const short = productId.replace(/-/g, "").slice(0, 4);
   return `PRD-${short}-${index + 1}`;
 }
-
-/* ==== SKU uniqueness helpers ==== */
 function uniqueSuffix(i: number) {
-  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  if (i < alphabet.length) return "-" + alphabet[i];
-  const q = Math.floor(i / alphabet.length);
-  const r = i % alphabet.length;
-  return "-" + alphabet[r] + q;
+  const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  if (i < A.length) return "-" + A[i];
+  const q = Math.floor(i / A.length);
+  const r = i % A.length;
+  return "-" + A[r] + q;
 }
 function ensureUniqueSku(base: string, taken: Set<string>) {
-  let candidate = base;
-  let i = 0;
-  while (taken.has(candidate)) {
-    candidate = base + uniqueSuffix(i++);
-  }
+  let candidate = base,
+    i = 0;
+  while (taken.has(candidate)) candidate = base + uniqueSuffix(i++);
   taken.add(candidate);
   return candidate;
 }
 
-/* =========================
-   GET  (⟵ الآن تحت Service Role لتجاوز RLS)
-   ========================= */
+/* ===== GET (Service-Role) ===== */
 export async function GET(
   _req: NextRequest,
   ctx: { params: Promise<{ id: string }> }
@@ -99,7 +83,6 @@ export async function GET(
   const { id: productId } = await ctx.params;
   if (!productId) return fail("Missing product id", null, 400);
 
-  // اقرأ بصلاحية الخدمة لأننا في مسار إدارة
   const supabase = createServiceRoleSupabase();
 
   const { data: optGroups, error: gErr } = await supabase
@@ -166,10 +149,9 @@ export async function GET(
 
   let qtyByVariant = new Map<string, number>();
   if (variantIds.length) {
-    const { data: inv, error: invErr } = await supabase
+    const { data: inv } = await supabase
       .from("variant_inventory")
       .select("variant_id, qty_on_hand");
-    if (invErr) return fail("inventory.load", invErr.message);
     inv?.forEach((r) => {
       qtyByVariant.set(
         r.variant_id,
@@ -190,6 +172,7 @@ export async function GET(
     optionValueIds: byVariantVals.get(v.id) ?? [],
     sku: v.sku ?? "",
     qty: qtyByVariant.get(v.id) ?? 0,
+    // مبدئياً لا نُرجع السعر من هنا (مصدره جدول مختلف)
   }));
 
   const optionsEnabled =
@@ -200,9 +183,7 @@ export async function GET(
   return NextResponse.json({ success: true, optionsEnabled, groups, variants });
 }
 
-/* =========================
-   PATCH (Service Role)
-   ========================= */
+/* ===== PATCH (edit/add + inventory + price) ===== */
 export async function PATCH(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> }
@@ -210,7 +191,6 @@ export async function PATCH(
   const { id: productId } = await ctx.params;
   if (!productId) return fail("Missing product id", null, 400);
 
-  // تسامح: لو الواجهة أرسلت groups كسلسلة JSON
   const raw = await req.json();
   if (typeof raw?.groups === "string") {
     try {
@@ -238,16 +218,15 @@ export async function PATCH(
     variants,
     branchId: preferredBranch,
   } = parsed.data;
-
   const supabase = createServiceRoleSupabase();
 
   try {
-    const branchId = await getOrFirstBranchId(
+    const resolvedBranchId = await getOrFirstBranchId(
       supabase,
       preferredBranch ?? null
     );
 
-    // 1) options + values
+    // === options + values (UPSERT) ===
     const usableGroups = groups.filter((g) => g.values.length > 0);
     const { data: existingOptions } = await supabase
       .from("product_options")
@@ -260,6 +239,7 @@ export async function PATCH(
     for (let idx = 0; idx < usableGroups.length; idx++) {
       const g = usableGroups[idx];
       let dbId = existingOptions?.find((o) => o.id === g.id)?.id;
+
       if (!dbId) {
         const { data, error } = await supabase
           .from("product_options")
@@ -345,7 +325,7 @@ export async function PATCH(
       }
     }
 
-    // 2) variants + links + inventory
+    // === variants + links + inventory ===
     const { data: existingVariants } = await supabase
       .from("product_variants")
       .select("id, sku")
@@ -373,20 +353,19 @@ export async function PATCH(
         .eq("variant_id", variantId);
       if (error) throw new Error(`links.reset: ${error.message}`);
     }
-
     async function upsertInventory(variantId: string, qty: number) {
       const { data: inv, error } = await supabase
         .from("variant_inventory")
         .select("id, qty_on_hand")
         .eq("variant_id", variantId)
-        .eq("branch_id", branchId)
+        .eq("branch_id", resolvedBranchId)
         .maybeSingle();
       if (error) throw new Error(`inventory.load: ${error.message}`);
 
       if (!inv) {
         const { error: ins } = await supabase.from("variant_inventory").insert({
           variant_id: variantId,
-          branch_id: branchId,
+          branch_id: resolvedBranchId,
           qty_on_hand: qty ?? 0,
           qty_reserved: 0,
         });
@@ -424,6 +403,7 @@ export async function PATCH(
         if (error) throw new Error(`variants.update: ${error.message}`);
       }
 
+      // إعادة ربط قيم الخيار
       await resetVariantLinks(dbVarId!);
       if (groups.length) {
         for (const uiValId of v.optionValueIds) {
@@ -439,7 +419,32 @@ export async function PATCH(
         }
       }
 
-      await upsertInventory(dbVarId!, v.qty ?? 0);
+      // الكمية
+      await upsertInventory(dbVarId!, (v as any)?.qty ?? 0);
+
+      // ==== السعر: حذف السعر retail القديم ثم إضافة السعر الجديد (إن وُجد) ====
+      const maybePrice = (v as any)?.price;
+      if (typeof maybePrice === "number" && !Number.isNaN(maybePrice)) {
+        // احذف أسعار retail السابقة (سلوك بسيط وواضح)
+        await supabase
+          .from("variant_prices")
+          .delete()
+          .eq("variant_id", dbVarId!)
+          .eq("price_type", "retail");
+
+        // أضف السعر الجديد
+        const { error: priceErr } = await supabase
+          .from("variant_prices")
+          .insert({
+            variant_id: dbVarId!,
+            price: maybePrice,
+            currency: "SAR",
+            price_type: "retail",
+            // starts_at: default now()
+          });
+        if (priceErr)
+          throw new Error(`variant_prices.insert: ${priceErr.message}`);
+      }
     }
 
     const enabled =
@@ -450,7 +455,7 @@ export async function PATCH(
     return ok({
       ok: true,
       optionsEnabled: enabled,
-      message: "Options & variants saved.",
+      message: "Options, variants & prices saved.",
     });
   } catch (e: any) {
     return fail("PATCH failed", e?.message || e, 500);
