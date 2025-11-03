@@ -1,7 +1,9 @@
+// src/app/admin/products/_components/TaxonTagsField.tsx
 "use client";
 
 import * as React from "react";
 import MultiTagSelect from "./MultiTagSelect";
+import { X } from "lucide-react";
 
 type FlatTaxon = {
   id: string;
@@ -12,6 +14,8 @@ type FlatTaxon = {
   sort_order?: number;
 };
 
+type ProductTaxon = { id: string; name: string };
+
 async function fetchFlatTaxons(): Promise<FlatTaxon[]> {
   const r = await fetch("/api/admin/taxons?flat=true", { cache: "no-store" });
   const j = await r.json().catch(() => ({}));
@@ -19,17 +23,12 @@ async function fetchFlatTaxons(): Promise<FlatTaxon[]> {
   return (j.data ?? []) as FlatTaxon[];
 }
 
-async function fetchProductTaxonIds(productId: string): Promise<string[]> {
-  // نستخدم راوت المنتج الحالي — لو ما يرجّع product_taxons ما مشكلة،
-  // إحنا أصلاً نخزّن ids محليًا بعد أول جلب ونحدثها مع كل PATCH.
+async function fetchProductTaxons(productId: string): Promise<ProductTaxon[]> {
   const r = await fetch(`/api/admin/products/${productId}`, { cache: "no-store" });
   const j = await r.json().catch(() => ({}));
   if (!r.ok || !j?.success) throw new Error(j?.error || `GET ${r.status}`);
-  // لو راوتك ما يرجع product_taxons، رجّع مصفوفة فاضية ونخلي المستخدم يختار من جديد
-  const ids = Array.isArray(j?.data?.product_taxons)
-    ? j.data.product_taxons.map((x: any) => x.taxon_id)
-    : [];
-  return ids;
+  // الراوت يُرجع الآن taxons: [{id,name}]
+  return (j?.data?.taxons ?? []) as ProductTaxon[];
 }
 
 async function patchProductTaxons(productId: string, taxonIds: string[]) {
@@ -44,20 +43,19 @@ async function patchProductTaxons(productId: string, taxonIds: string[]) {
 }
 
 /**
- * - يظهر زر "أضف تصنيف"
- * - يعرض البادجات للأقسام المختارة
- * - يزامن مباشرة مع الـAPI عند أي تغيير
+ * حقل أقسام المنتج:
+ * - زر "أضف تصنيف" (قائمة بكل التصنيفات الموجودة)
+ * - بادجات قابلة للإزالة (X) — الحذف يحفظ فورًا
+ * - عند تحديث الصفحة/فتح البطاقة: يعيد ملء المختار تلقائيًا
  */
 export default function TaxonTagsField({
   productId,
   className,
   placeholder = "أضف تصنيف",
-  initialTaxonIds, // اختياري
 }: {
   productId: string;
   className?: string;
   placeholder?: string;
-  initialTaxonIds?: string[];
 }) {
   const [loading, setLoading] = React.useState(true);
   const [allTaxons, setAllTaxons] = React.useState<FlatTaxon[]>([]);
@@ -65,67 +63,82 @@ export default function TaxonTagsField({
   const [taxonIdByName, setTaxonIdByName] = React.useState<Map<string, string>>(new Map());
   const [nameByTaxonId, setNameByTaxonId] = React.useState<Map<string, string>>(new Map());
 
+  // نجلب التصنيفات + أقسام المنتج
   React.useEffect(() => {
     let alive = true;
     (async () => {
       try {
         setLoading(true);
 
-        const flat = await fetchFlatTaxons();
+        const [flat, prodTaxons] = await Promise.all([
+          fetchFlatTaxons(),
+          fetchProductTaxons(productId),
+        ]);
         if (!alive) return;
+
         setAllTaxons(flat);
 
         const idByName = new Map<string, string>();
         const nameById = new Map<string, string>();
-        flat.forEach(t => {
+        flat.forEach((t) => {
           idByName.set(t.name, t.id);
           nameById.set(t.id, t.name);
         });
         setTaxonIdByName(idByName);
         setNameByTaxonId(nameById);
 
-        const productTaxonIds = Array.isArray(initialTaxonIds)
-          ? initialTaxonIds
-          : await fetchProductTaxonIds(productId);
-
-        const names = productTaxonIds
-          .map(id => nameById.get(id))
-          .filter(Boolean) as string[];
+        // اضبط المختار بالأسماء (عشان MultiTagSelect يقدر يعرضها)
+        const names = prodTaxons
+          .map((t) => t.name)
+          .filter(Boolean);
         setSelectedNames(names);
       } finally {
         if (alive) setLoading(false);
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [productId]);
 
-  const suggestions = React.useMemo(() => allTaxons.map(t => t.name), [allTaxons]);
+  const suggestions = React.useMemo(() => allTaxons.map((t) => t.name), [allTaxons]);
 
-  async function handleChange(nextNames: string[]) {
-    // امنع إنشاء أسماء جديدة — فقط من الموجود في القاعدة
-    const nextIds: string[] = [];
-    for (const nm of nextNames) {
+  // يحوّل الأسماء إلى IDs — يمنع إضافة اسم غير موجود في قاعدة البيانات
+  function namesToIds(names: string[]) {
+    const ids: string[] = [];
+    for (const nm of names) {
       const id = taxonIdByName.get(nm);
-      if (id) nextIds.push(id);
+      if (id) ids.push(id);
     }
+    return ids;
+  }
 
+  // إضافة/تغيير من MultiTagSelect
+  async function handleChange(nextNames: string[]) {
+    const nextIds = namesToIds(nextNames);
     const prevNames = selectedNames;
-    setSelectedNames(nextNames); // تحديث واجهة مباشر
+    setSelectedNames(nextNames);
 
     try {
       await patchProductTaxons(productId, nextIds);
-      // نجاح: خلي البادجات زي ما هي
+      // تمت المزامنة بنجاح
     } catch (e: any) {
       setSelectedNames(prevNames); // رجّع الواجهة
       alert(`❌ فشل تحديث الأقسام: ${e?.message || e}`);
     }
   }
 
+  // إزالة عنصر من البادجات
+  async function handleRemove(name: string) {
+    const nextNames = selectedNames.filter((n) => n !== name);
+    await handleChange(nextNames);
+  }
+
   if (loading) {
     return (
       <div className={className}>
         <div className="flex items-center gap-2 text-sm text-zinc-600">
-          <span className="h-4 w-4 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-600" />
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-zinc-300 border-top-zinc-600" />
           تحميل التصنيفات…
         </div>
       </div>
@@ -141,18 +154,27 @@ export default function TaxonTagsField({
         placeholder={placeholder}
       />
 
-      {/* البادجات المختارة — واضحة داخل البطاقة */}
-      <div className="mt-2 flex flex-wrap gap-1.5">
+      {/* البادجات + زر الحذف */}
+      <div className="mt-2 flex flex-wrap gap-6">
         {selectedNames.length === 0 ? (
           <span className="text-xs text-zinc-500">لا توجد أقسام مرتبطة.</span>
         ) : (
           selectedNames.map((name) => (
             <span
               key={name}
-              className="inline-flex items-center rounded-full border border-zinc-200/70 bg-zinc-50/80 px-2.5 py-1 text-[12px] text-zinc-700"
+              className="inline-flex items-center gap-2 rounded-full border border-zinc-200/70 bg-zinc-50/80 px-3 py-1.5 text-[12px] text-zinc-700 shadow-sm"
               title={name}
             >
               {name}
+              <button
+                type="button"
+                onClick={() => handleRemove(name)}
+                className="rounded-full p-1 text-zinc-500 transition hover:bg-zinc-100/80"
+                title="إزالة"
+                aria-label={`إزالة ${name}`}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
             </span>
           ))
         )}

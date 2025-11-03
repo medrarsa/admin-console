@@ -219,54 +219,7 @@ export default function SallaProductCard({
         </div>
       </div>
 
-      {/* tags + local category */}
-      <div className="mb-3">
-        <div className="mb-2 flex flex-wrap items-center gap-2">
-          {tags.map((t) => (
-            <span
-              key={t}
-              className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200/70 bg-zinc-50/80 px-2.5 py-1 text-[12px] text-zinc-700 shadow-sm"
-            >
-              {t}
-              <button
-                type="button"
-                className="rounded-full p-1 text-zinc-500 transition hover:bg-zinc-100/80"
-                onClick={() => removeTag(t)}
-                title="إزالة"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </span>
-          ))}
-        </div>
-
-        <MultiTagSelect
-          selected={tags}
-          onChange={(next) => {
-            setTags(next);
-            onChange({ tags: next });
-          }}
-        />
-
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          <div className="rounded-2xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-[13px] text-zinc-600 shadow-sm">
-            تصنيف محلي
-          </div>
-          <select
-            className="rounded-2xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-[13px] text-zinc-700 outline-none shadow-sm focus:ring-2 focus:ring-teal-500/40 transition"
-            value={localCat ?? ""}
-            onChange={(e) => {
-              const v = e.currentTarget.value;
-              setLocalCat(v || null);
-            }}
-          >
-            <option value="">اختر تصنيف محلي</option>
-            <option value="suspension">تعليق/مساعدات</option>
-            <option value="body">بودي خارجي</option>
-            <option value="lights">أنوار</option>
-          </select>
-        </div>
-      </div>
+     
 
       {/* ✅ أئمة/قائمة التصنيف (ربط أقسام المنتج) */}
       <div className="mb-3">

@@ -117,6 +117,18 @@ async function buildProductDetails(db: any, product_id: string) {
     if (b) brand = { id: b.id, name: b.name };
   }
 
+  /* ===== الأقسام المرتبطة (id + name) ===== */
+  const { data: pt } = await db
+    .from("product_taxons")
+    .select("taxon_id, taxons:taxon_id ( id, name )")
+    .eq("product_id", product_id);
+  const taxons: { id: string; name: string }[] =
+    (pt ?? [])
+      .map((row: any) =>
+        row?.taxons?.id ? { id: row.taxons.id, name: row.taxons.name } : null
+      )
+      .filter(Boolean) as any[];
+
   const { data: variants } = await db
     .from("product_variants")
     .select("id,sku,cost_price,unlimited_quantity")
@@ -164,6 +176,7 @@ async function buildProductDetails(db: any, product_id: string) {
 
   const { data: channelsRaw } = await db.from("product_channels").select("channel").eq("product_id", product_id);
   const channels = (channelsRaw || []).map((c: any) => c.channel);
+
   const { data: ptRaw } = await db.from("product_tags").select("tag_id").eq("product_id", product_id);
   const tagIds = (ptRaw || []).map((x: any) => x.tag_id);
   let tags: { id: string; name: string }[] = [];
@@ -193,6 +206,10 @@ async function buildProductDetails(db: any, product_id: string) {
 
     brand,
     channels,
+
+    /* ← نضيفها للواجهة (للتعبئة عند التحديث والبادجات) */
+    taxons, // [{ id, name }]
+
     tags,
     images:
       (imagesRaw || []).map((im: any) => ({
@@ -254,7 +271,6 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
 
     /* ✅ 0) مزامنة الأقسام مع منع التكرار + upsert */
     if (Array.isArray(body.taxon_ids)) {
-      // فَرْد القيم وتطهيرها
       const ids = Array.from(
         new Set(
           body.taxon_ids
@@ -264,7 +280,6 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
         )
       );
 
-      // الحالي
       const { data: currentRows, error: curErr } = await supabase
         .from("product_taxons")
         .select("taxon_id")
@@ -287,7 +302,6 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
       }
 
       if (toInsert.length) {
-        // 🔐 يحمي من الـ duplicate حتى لو وصل نفس الطلب مرتين بسرعة
         const { error: insErr } = await admin
           .from("product_taxons")
           .upsert(toInsert, { onConflict: "product_id,taxon_id" });
