@@ -1,3 +1,4 @@
+// src/app/api/admin/taxons/route.ts
 import { NextResponse } from "next/server";
 import { createClient as createSb } from "@supabase/supabase-js";
 
@@ -22,6 +23,82 @@ function createServiceClient() {
   });
 }
 
+/* =========================
+   GET: يعيد شجرة أو قائمة flat
+   ========================= */
+function buildTree(rows: any[]) {
+  const byId = new Map<string, any>();
+  const roots: any[] = [];
+  rows.forEach((r) => byId.set(r.id, { ...r, children: [] }));
+  rows.forEach((r) => {
+    const node = byId.get(r.id);
+    if (r.parent_id && byId.has(r.parent_id)) {
+      byId.get(r.parent_id).children.push(node);
+    } else {
+      roots.push(node);
+    }
+  });
+  const sortRec = (n: any) => {
+    if (n.children?.length) {
+      n.children.sort(
+        (a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0)
+      );
+      n.children.forEach(sortRec);
+    }
+  };
+  roots.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  roots.forEach(sortRec);
+  return roots;
+}
+
+export async function GET(req: Request) {
+  try {
+    const supa = createServiceClient();
+    const url = new URL(req.url);
+    const flat = url.searchParams.get("flat") === "true";
+    const status = url.searchParams.get("status") || "active"; // الافتراضي
+
+    const { data, error } = await supa
+      .from("taxons")
+      .select("id,parent_id,level,name,slug,sort_order,status,is_active")
+      .eq("status", status) // غيّرها إن بغيت تعرض الكل
+      .order("sort_order", { ascending: true });
+
+    if (error) {
+      return NextResponse.json(
+        { status: 500, success: false, error: error.message },
+        { status: 500 }
+      );
+    }
+
+    if (flat) {
+      return NextResponse.json({
+        status: 200,
+        success: true,
+        data: (data ?? []).map((r) => ({
+          id: r.id,
+          parent_id: r.parent_id,
+          level: r.level,
+          name: r.name,
+          slug: r.slug,
+          sort_order: r.sort_order,
+        })),
+      });
+    }
+
+    const tree = buildTree(data ?? []);
+    return NextResponse.json({ status: 200, success: true, data: tree });
+  } catch (e: any) {
+    return NextResponse.json(
+      { status: 500, success: false, error: e?.message || "Service error" },
+      { status: 500 }
+    );
+  }
+}
+
+/* =========================
+   POST: إنشاء تصنيف (كما هو)
+   ========================= */
 export async function POST(req: Request) {
   try {
     const supa = createServiceClient();
