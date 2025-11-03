@@ -52,6 +52,7 @@ export default function TaxonTagsField({
 }) {
   const [loading, setLoading] = React.useState(true);
   const [syncing, setSyncing] = React.useState(false);
+  const [expanded, setExpanded] = React.useState(false); // ⬅️ وضع التوسيع/الطيّ
   const [allTaxons, setAllTaxons] = React.useState<FlatTaxon[]>([]);
   const [selectedNames, setSelectedNames] = React.useState<string[]>([]);
   const [taxonIdByName, setTaxonIdByName] = React.useState<Map<string, string>>(new Map());
@@ -84,9 +85,7 @@ export default function TaxonTagsField({
         if (alive) setLoading(false);
       }
     })();
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
   }, [productId]);
 
   const suggestions = React.useMemo(() => allTaxons.map((t) => t.name), [allTaxons]);
@@ -136,6 +135,30 @@ export default function TaxonTagsField({
     );
   }
 
+  // عنصر شارة واحدة (للاستخدام في الوضعين)
+  const Chip = ({ name }: { name: string }) => (
+    <span
+      className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-zinc-200/70 bg-zinc-50/80 px-3 py-1.5 text-[12px] text-zinc-700 shadow-sm"
+      title={name}
+    >
+      {name}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (!syncing) handleRemove(name);
+        }}
+        className="rounded-full p-1 text-zinc-500 transition hover:bg-zinc-100/80 disabled:opacity-50"
+        title="إزالة"
+        aria-label={`إزالة ${name}`}
+        disabled={syncing}
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </span>
+  );
+
   return (
     <div className={className}>
       <MultiTagSelect
@@ -145,53 +168,45 @@ export default function TaxonTagsField({
         placeholder={placeholder}
       />
 
-      {/* صف واحد قابل للتمرير أفقيًا + عدّاد */}
-      <div className="mt-2 relative">
-        {selectedNames.length > 0 && (
-          <span className="absolute -top-5 end-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-600">
-            {selectedNames.length} تصنيف
-          </span>
-        )}
-
-        <div
-          className="flex gap-2 overflow-x-auto no-scrollbar"
-          style={{ WebkitOverflowScrolling: "touch" }}
-        >
-          {selectedNames.length === 0 ? (
-            <span className="text-xs text-zinc-500">لا توجد أقسام مرتبطة.</span>
-          ) : (
-            selectedNames.map((name) => (
-              <span
-                key={name}
-                className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-zinc-200/70 bg-zinc-50/80 px-3 py-1.5 text-[12px] text-zinc-700 shadow-sm"
-                title={name}
-              >
-                {name}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (!syncing) handleRemove(name);
-                  }}
-                  className="rounded-full p-1 text-zinc-500 transition hover:bg-zinc-100/80 disabled:opacity-50"
-                  title="إزالة"
-                  aria-label={`إزالة ${name}`}
-                  disabled={syncing}
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </span>
-            ))
-          )}
+      {/* شريط معلومات + زر توسيع/إخفاء */}
+      <div className="mt-1 flex items-center justify-between">
+        <div className="text-[11px] text-zinc-500">
+          {selectedNames.length > 0 ? `${selectedNames.length} تصنيف` : "لا توجد أقسام مرتبطة"}
         </div>
-
-        {/* ✅ CSS عادي بدون styled-jsx */}
-        <style>{`
-          .no-scrollbar::-webkit-scrollbar { display: none; }
-          .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        `}</style>
+        {selectedNames.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setExpanded((s) => !s)}
+            className="text-[12px] text-teal-700 hover:underline"
+          >
+            {expanded ? "إخفاء" : "عرض الكل"}
+          </button>
+        )}
       </div>
+
+      {/* العرض */}
+      {selectedNames.length > 0 && (
+        expanded ? (
+          // ✅ وضع موسّع: التفاف متعدد الأسطر (بدون تمرير)
+          <div className="mt-2 flex flex-wrap gap-2">
+            {selectedNames.map((name) => <Chip key={name} name={name} />)}
+          </div>
+        ) : (
+          // ✅ وضع مضغوط: سطر واحد بتمرير أفقي
+          <div className="mt-2 relative">
+            <div
+              className="flex gap-2 overflow-x-auto no-scrollbar"
+              style={{ WebkitOverflowScrolling: "touch" }}
+            >
+              {selectedNames.map((name) => <Chip key={name} name={name} />)}
+            </div>
+            <style>{`
+              .no-scrollbar::-webkit-scrollbar { display: none; }
+              .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+            `}</style>
+          </div>
+        )
+      )}
 
       {syncing && (
         <div className="mt-1 text-[11px] text-zinc-500">جارٍ تحديث الأقسام…</div>
