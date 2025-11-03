@@ -1,18 +1,18 @@
-// src/app/api/admin/products/options/group/[groupId]/route.ts
+// src/app/api/admin/products/[id]/options/group/[groupId]/route.ts
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createServiceRoleSupabase } from "@/lib/supabase/server";
 
 export async function DELETE(
-  _req: Request,
-  ctx: { params: { groupId: string } } // ← لا تستخدم Promise هنا
+  _req: NextRequest,
+  ctx: { params: Promise<{ id: string; groupId: string }> }
 ) {
-  const { groupId } = ctx.params;
-  if (!groupId) {
+  const { id: productId, groupId } = await ctx.params;
+  if (!productId || !groupId) {
     return NextResponse.json(
-      { success: false, message: "Missing groupId" },
+      { success: false, message: "Missing productId/groupId" },
       { status: 400 }
     );
   }
@@ -20,7 +20,7 @@ export async function DELETE(
   try {
     const supabase = createServiceRoleSupabase();
 
-    // اجلب القيم التابعة للمجموعة
+    // احضر القيم التابعة للمجموعة
     const { data: vals, error: valsErr } = await supabase
       .from("product_option_values")
       .select("id")
@@ -29,7 +29,7 @@ export async function DELETE(
 
     const valIds = (vals ?? []).map((v) => v.id);
 
-    // احذف روابط المتغيرات
+    // احذف روابط المتغيرات أولاً
     if (valIds.length) {
       const { error: delLinks } = await supabase
         .from("variant_option_values")
@@ -37,7 +37,7 @@ export async function DELETE(
         .in("option_value_id", valIds);
       if (delLinks) throw delLinks;
 
-      // احذف القيم
+      // ثم احذف القيم
       const { error: delVals } = await supabase
         .from("product_option_values")
         .delete()
@@ -45,11 +45,12 @@ export async function DELETE(
       if (delVals) throw delVals;
     }
 
-    // احذف المجموعة
+    // احذف المجموعة نفسها
     const { error: delGroup } = await supabase
       .from("product_options")
       .delete()
-      .eq("id", groupId);
+      .eq("id", groupId)
+      .eq("product_id", productId);
     if (delGroup) throw delGroup;
 
     return NextResponse.json({ success: true });
