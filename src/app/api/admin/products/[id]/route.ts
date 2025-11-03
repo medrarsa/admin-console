@@ -117,8 +117,9 @@ async function buildProductDetails(db: any, product_id: string) {
     if (b) brand = { id: b.id, name: b.name };
   }
 
-  /* ===== الأقسام المرتبطة (id + name) ===== */
-  const { data: pt } = await db
+  /* ===== الأقسام المرتبطة (id + name) — نقرأها بعميل الخدمة لتجاوز أي RLS ===== */
+  const svc = createServiceRoleSupabase();
+  const { data: pt } = await svc
     .from("product_taxons")
     .select("taxon_id, taxons:taxon_id ( id, name )")
     .eq("product_id", product_id);
@@ -176,7 +177,6 @@ async function buildProductDetails(db: any, product_id: string) {
 
   const { data: channelsRaw } = await db.from("product_channels").select("channel").eq("product_id", product_id);
   const channels = (channelsRaw || []).map((c: any) => c.channel);
-
   const { data: ptRaw } = await db.from("product_tags").select("tag_id").eq("product_id", product_id);
   const tagIds = (ptRaw || []).map((x: any) => x.tag_id);
   let tags: { id: string; name: string }[] = [];
@@ -193,7 +193,7 @@ async function buildProductDetails(db: any, product_id: string) {
 
     price: { amount: mainPrice?.price ?? 0, currency: mainPrice?.currency ?? "SAR" },
     sale_price: { amount: mainPrice?.sale_price ?? 0, currency: mainPrice?.currency ?? "SAR" },
-    sale_end: mainPrice?.ends_at ?? null,
+    sale_end: { value: mainPrice?.ends_at ?? null },
     main_cost_price: mainCost,
     quantity,
 
@@ -207,7 +207,7 @@ async function buildProductDetails(db: any, product_id: string) {
     brand,
     channels,
 
-    /* ← نضيفها للواجهة (للتعبئة عند التحديث والبادجات) */
+    // ← تُستخدم لتعبئة الحقل والبادجات بعد التحديث
     taxons, // [{ id, name }]
 
     tags,
