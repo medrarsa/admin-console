@@ -162,7 +162,22 @@ export default function OptionsQuantityDialog({
     setGroups((g) => [...g, { id, type: "text", name: "خيار", values: [] }]);
     setRowsByGroup((m) => ({ ...m, [id]: [] }));
   }
-  function removeGroup(groupId: string) {
+
+  // ✅ حذف مجموعة (ينادي الراوت الصحيح + تحديث الحالة)
+  async function removeGroup(groupId: string) {
+    try {
+      const res = await fetch(
+        `/api/admin/products/${product.id}/options/group/${groupId}`,
+        { method: "DELETE" }
+      );
+      // حتى لو فشل الراوت لأي سبب، نكمل حذفها من الواجهة
+      if (!res.ok) {
+        await res.json().catch(() => ({}));
+      }
+    } catch {
+      /* تجاهل، نكمل في الواجهة */
+    }
+    // حذف من الحالة (ويبقى حذف نهائي يتم عند الحفظ عبر DELETE-by-omission)
     setGroups((g) => g.filter((x) => x.id !== groupId));
     setRowsByGroup((m) => {
       const c = { ...m };
@@ -170,6 +185,7 @@ export default function OptionsQuantityDialog({
       return c;
     });
   }
+
   function patchGroup(groupId: string, patch: Partial<OptionGroup>) {
     setGroups((g) => g.map((x) => (x.id === groupId ? { ...x, ...patch } : x)));
   }
@@ -185,18 +201,33 @@ export default function OptionsQuantityDialog({
     };
     setRowsByGroup((m) => ({ ...m, [groupId]: [...(m[groupId] || []), row] }));
   }
+
+  // ✅ حذف قيمة/صف (ينادي الراوت الصحيح + تحديث الحالة)
+  async function removeRow(groupId: string, rowId: string) {
+    try {
+      const res = await fetch(
+        `/api/admin/products/${product.id}/options/value/${rowId}`,
+        { method: "DELETE" }
+      );
+      if (!res.ok) {
+        await res.json().catch(() => ({}));
+      }
+    } catch {
+      /* تجاهل */
+    }
+    // تنظيف الحالة محليًا دائمًا
+    setRowsByGroup((m) => ({
+      ...m,
+      [groupId]: (m[groupId] || []).filter((r) => r.id !== rowId),
+    }));
+  }
+
   function patchRow(groupId: string, rowId: string, patch: Partial<Row>) {
     setRowsByGroup((m) => ({
       ...m,
       [groupId]: (m[groupId] || []).map((r) =>
         r.id === rowId ? { ...r, ...patch } : r
       ),
-    }));
-  }
-  function removeRow(groupId: string, rowId: string) {
-    setRowsByGroup((m) => ({
-      ...m,
-      [groupId]: (m[groupId] || []).filter((r) => r.id !== rowId),
     }));
   }
 
