@@ -4,7 +4,9 @@ import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceRoleSupabase } from "@/lib/supabase/server";
 
-/* ===== Schemas ===== */
+/* =========================
+   Schemas
+   ========================= */
 const ValueSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
@@ -24,7 +26,7 @@ const VariantSchema = z.object({
   optionValueIds: z.array(z.string().min(1)).nonempty(),
   sku: z.string().optional().nullable(),
   qty: z.number().int().min(0).default(0),
-  // price قد يأتي ضمن الكائن؛ سنقرأه عبر (v as any).price
+  // price يُمرّر اختيارياً ضمن الجسم وسنقرأه بوضوح (string | number)
 });
 
 const PatchBody = z.object({
@@ -34,7 +36,9 @@ const PatchBody = z.object({
   branchId: z.string().uuid().optional(),
 });
 
-/* ===== Helpers ===== */
+/* =========================
+   Helpers
+   ========================= */
 const ok = (body: any, status = 200) =>
   NextResponse.json({ status, success: true, ...body }, { status });
 
@@ -64,6 +68,7 @@ function autoSku(productId: string, index: number) {
   const short = productId.replace(/-/g, "").slice(0, 4);
   return `PRD-${short}-${index + 1}`;
 }
+
 function uniqueSuffix(i: number) {
   const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   if (i < A.length) return "-" + A[i];
@@ -80,7 +85,7 @@ function ensureUniqueSku(base: string, taken: Set<string>) {
 }
 
 /* =========================
-   GET (Service Role)
+   GET  (Service Role)
    ========================= */
 export async function GET(
   _req: NextRequest,
@@ -91,7 +96,7 @@ export async function GET(
 
   const supabase = createServiceRoleSupabase();
 
-  // 1) options
+  // 1) product_options
   const { data: optGroups, error: gErr } = await supabase
     .from("product_options")
     .select("id, name, display_type, sort_order")
@@ -99,7 +104,7 @@ export async function GET(
     .order("sort_order", { ascending: true });
   if (gErr) return fail("options.load", gErr.message);
 
-  // 2) option values
+  // 2) product_option_values
   const groupIds = (optGroups ?? []).map((g) => g.id);
   let valuesByGroup = new Map<string, any[]>();
   if (groupIds.length) {
@@ -133,7 +138,7 @@ export async function GET(
     }, new Map<string, any[]>());
   }
 
-  // 3) variants
+  // 3) product_variants
   const { data: vars, error: varErr } = await supabase
     .from("product_variants")
     .select("id, sku, created_at")
@@ -143,7 +148,7 @@ export async function GET(
 
   const variantIds = (vars ?? []).map((v) => v.id);
 
-  // 4) links
+  // 4) variant_option_values (روابط)
   let byVariantVals = new Map<string, string[]>();
   if (variantIds.length) {
     const { data: links, error: lErr } = await supabase
@@ -158,7 +163,7 @@ export async function GET(
     }
   }
 
-  // 5) qty (aggregated)
+  // 5) الكميات (مجمّعة على كل الفروع)
   let qtyByVariant = new Map<string, number>();
   if (variantIds.length) {
     const { data: inv } = await supabase
@@ -172,7 +177,7 @@ export async function GET(
     });
   }
 
-  // 6) latest retail price per variant (no RPC)
+  // 6) أحدث سعر retail لكل variant (بدون RPC)
   let priceByVariant = new Map<string, number>();
   if (variantIds.length) {
     const { data: allPrices, error: pErr } = await supabase
@@ -182,7 +187,6 @@ export async function GET(
       .eq("price_type", "retail");
     if (pErr) return fail("prices.load", pErr.message);
 
-    // احصل على أحدث صف لكل variant_id
     const latest = new Map<string, { price: number; created_at: string }>();
     for (const p of allPrices ?? []) {
       const prev = latest.get(p.variant_id);
@@ -257,6 +261,7 @@ export async function PATCH(
     variants,
     branchId: preferredBranch,
   } = parsed.data;
+
   const supabase = createServiceRoleSupabase();
 
   try {
@@ -265,7 +270,7 @@ export async function PATCH(
       preferredBranch ?? null
     );
 
-    // 1) options + values (UPSERT)
+    // ========== 1) options + values (UPSERT) ==========
     const usableGroups = groups.filter((g) => g.values.length > 0);
     const { data: existingOptions } = await supabase
       .from("product_options")
@@ -363,7 +368,7 @@ export async function PATCH(
       }
     }
 
-    // 2) variants + links + inventory + price
+    // ========== 2) variants + links + inventory + prices ==========
     const { data: existingVariants } = await supabase
       .from("product_variants")
       .select("id, sku")
@@ -375,7 +380,6 @@ export async function PATCH(
         .filter((s) => s.length > 0)
     );
 
-    // نظّف/ولّد SKU فريد
     const normalizedVariants = variants.map((v, i) => {
       const base =
         v.sku && v.sku.trim().length >= 3
@@ -392,6 +396,7 @@ export async function PATCH(
         .eq("variant_id", variantId);
       if (error) throw new Error(`links.reset: ${error.message}`);
     }
+
     async function upsertInventory(variantId: string, qty: number) {
       const { data: inv, error } = await supabase
         .from("variant_inventory")
@@ -419,7 +424,7 @@ export async function PATCH(
     }
 
     for (const v of normalizedVariants) {
-      // اضمن أن id المُرسل نستخدمه لو موجود (حتى تربط الواجهة السعر لنفس المتغير)
+      // حافظ على ID القادم من الواجهة (يساوي valueId) لثبات الربط
       let dbVarId = existingVariants?.find((ev) => ev.id === v.id)?.id;
 
       if (!dbVarId) {
@@ -443,7 +448,7 @@ export async function PATCH(
         if (error) throw new Error(`variants.update: ${error.message}`);
       }
 
-      // relink option values
+      // relink values
       await resetVariantLinks(dbVarId!);
       if (groups.length) {
         for (const uiValId of v.optionValueIds) {
@@ -462,17 +467,17 @@ export async function PATCH(
       // inventory
       await upsertInventory(dbVarId!, (v as any)?.qty ?? 0);
 
-      // price: احفظ السعر إن وُجد في payload (string/number)
+      // === price: احفظ سعر retail إن وُجد (string | number) ===
       const rawPrice = (v as any)?.price;
       const maybePrice =
         typeof rawPrice === "string"
-          ? Number(rawPrice)
+          ? Number(rawPrice.trim())
           : typeof rawPrice === "number"
           ? rawPrice
           : NaN;
 
       if (!Number.isNaN(maybePrice)) {
-        // احذف أسعار retail السابقة ثم أضف السعر الجديد
+        // احذف أي سعر retail سابق لهذا المتغير
         const { error: delOld } = await supabase
           .from("variant_prices")
           .delete()
@@ -480,6 +485,7 @@ export async function PATCH(
           .eq("price_type", "retail");
         if (delOld) throw new Error(`variant_prices.delete: ${delOld.message}`);
 
+        // أدخل السعر الجديد
         const { error: insPrice } = await supabase
           .from("variant_prices")
           .insert({
