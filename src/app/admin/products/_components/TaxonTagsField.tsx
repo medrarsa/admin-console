@@ -1,4 +1,3 @@
-// src/app/admin/products/_components/TaxonTagsField.tsx
 "use client";
 
 import * as React from "react";
@@ -27,7 +26,6 @@ async function fetchProductTaxons(productId: string): Promise<ProductTaxon[]> {
   const r = await fetch(`/api/admin/products/${productId}`, { cache: "no-store" });
   const j = await r.json().catch(() => ({}));
   if (!r.ok || !j?.success) throw new Error(j?.error || `GET ${r.status}`);
-  // الراوت يُرجع الآن taxons: [{id,name}]
   return (j?.data?.taxons ?? []) as ProductTaxon[];
 }
 
@@ -42,12 +40,6 @@ async function patchProductTaxons(productId: string, taxonIds: string[]) {
   return true;
 }
 
-/**
- * حقل أقسام المنتج:
- * - زر "أضف تصنيف" (قائمة بكل التصنيفات الموجودة)
- * - بادجات قابلة للإزالة (X) — الحذف يحفظ فورًا
- * - عند تحديث الصفحة/فتح البطاقة: يعيد ملء المختار تلقائيًا
- */
 export default function TaxonTagsField({
   productId,
   className,
@@ -58,12 +50,13 @@ export default function TaxonTagsField({
   placeholder?: string;
 }) {
   const [loading, setLoading] = React.useState(true);
+  const [syncing, setSyncing] = React.useState(false); // قفل أثناء الحذف/الإضافة
   const [allTaxons, setAllTaxons] = React.useState<FlatTaxon[]>([]);
   const [selectedNames, setSelectedNames] = React.useState<string[]>([]);
   const [taxonIdByName, setTaxonIdByName] = React.useState<Map<string, string>>(new Map());
   const [nameByTaxonId, setNameByTaxonId] = React.useState<Map<string, string>>(new Map());
 
-  // نجلب التصنيفات + أقسام المنتج
+  // تحميل التصنيفات + أقسام المنتج (للظهور بعد التحديث)
   React.useEffect(() => {
     let alive = true;
     (async () => {
@@ -87,11 +80,7 @@ export default function TaxonTagsField({
         setTaxonIdByName(idByName);
         setNameByTaxonId(nameById);
 
-        // اضبط المختار بالأسماء (عشان MultiTagSelect يقدر يعرضها)
-        const names = prodTaxons
-          .map((t) => t.name)
-          .filter(Boolean);
-        setSelectedNames(names);
+        setSelectedNames(prodTaxons.map((t) => t.name).filter(Boolean));
       } finally {
         if (alive) setLoading(false);
       }
@@ -103,7 +92,6 @@ export default function TaxonTagsField({
 
   const suggestions = React.useMemo(() => allTaxons.map((t) => t.name), [allTaxons]);
 
-  // يحوّل الأسماء إلى IDs — يمنع إضافة اسم غير موجود في قاعدة البيانات
   function namesToIds(names: string[]) {
     const ids: string[] = [];
     for (const nm of names) {
@@ -113,32 +101,41 @@ export default function TaxonTagsField({
     return ids;
   }
 
-  // إضافة/تغيير من MultiTagSelect
-  async function handleChange(nextNames: string[]) {
+  async function commit(nextNames: string[]) {
     const nextIds = namesToIds(nextNames);
     const prevNames = selectedNames;
-    setSelectedNames(nextNames);
 
+    setSelectedNames(nextNames);
+    setSyncing(true);
     try {
       await patchProductTaxons(productId, nextIds);
-      // تمت المزامنة بنجاح
     } catch (e: any) {
-      setSelectedNames(prevNames); // رجّع الواجهة
+      // رجوع عن التغيير إذا فشل
+      setSelectedNames(prevNames);
       alert(`❌ فشل تحديث الأقسام: ${e?.message || e}`);
+    } finally {
+      setSyncing(false);
     }
   }
 
-  // إزالة عنصر من البادجات
+  // إضافة/تغيير من MultiTagSelect
+  async function handleChange(nextNames: string[]) {
+    // منع اختيار اسم غير موجود في القاعدة
+    const filtered = nextNames.filter((nm) => taxonIdByName.has(nm));
+    await commit(filtered);
+  }
+
+  // حذف من بادج (×)
   async function handleRemove(name: string) {
     const nextNames = selectedNames.filter((n) => n !== name);
-    await handleChange(nextNames);
+    await commit(nextNames);
   }
 
   if (loading) {
     return (
       <div className={className}>
         <div className="flex items-center gap-2 text-sm text-zinc-600">
-          <span className="h-4 w-4 animate-spin rounded-full border-2 border-zinc-300 border-top-zinc-600" />
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-600" />
           تحميل التصنيفات…
         </div>
       </div>
@@ -154,7 +151,7 @@ export default function TaxonTagsField({
         placeholder={placeholder}
       />
 
-      {/* البادجات + زر الحذف */}
+      {/* البادجات مع زر الحذف */}
       <div className="mt-2 flex flex-wrap gap-6">
         {selectedNames.length === 0 ? (
           <span className="text-xs text-zinc-500">لا توجد أقسام مرتبطة.</span>
@@ -168,10 +165,15 @@ export default function TaxonTagsField({
               {name}
               <button
                 type="button"
-                onClick={() => handleRemove(name)}
-                className="rounded-full p-1 text-zinc-500 transition hover:bg-zinc-100/80"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (!syncing) handleRemove(name);
+                }}
+                className="rounded-full p-1 text-zinc-500 transition hover:bg-zinc-100/80 disabled:opacity-50"
                 title="إزالة"
                 aria-label={`إزالة ${name}`}
+                disabled={syncing}
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -179,6 +181,11 @@ export default function TaxonTagsField({
           ))
         )}
       </div>
+
+      {/* حالة مزامنة بسيطة */}
+      {syncing && (
+        <div className="mt-1 text-[11px] text-zinc-500">جارٍ تحديث الأقسام…</div>
+      )}
     </div>
   );
 }
