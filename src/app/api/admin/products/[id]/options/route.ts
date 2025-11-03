@@ -3,8 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  createServerSupabase as createSessionServerClient, // للقراءة تحت RLS
-  createServiceRoleSupabase, // للكتابة بصلاحية الخدمة
+  createServerSupabase as createSessionServerClient,
+  createServiceRoleSupabase,
 } from "@/lib/supabase/server";
 
 /* =========================
@@ -20,7 +20,7 @@ const ValueSchema = z.object({
 const GroupSchema = z.object({
   id: z.string().min(1),
   type: z.enum(["text", "color", "image"]),
-  name: z.string().min(1), // 👈 لازم اسم غير فاضي
+  name: z.string().min(1),
   values: z.array(ValueSchema),
 });
 
@@ -33,7 +33,7 @@ const VariantSchema = z.object({
 
 const PatchBody = z.object({
   optionsEnabled: z.boolean().optional(),
-  groups: z.array(GroupSchema), // 👈 مصفوفة مجموعات — هذا هو الصحيح
+  groups: z.array(GroupSchema),
   variants: z.array(VariantSchema),
   branchId: z.string().uuid().optional(),
 });
@@ -71,7 +71,7 @@ function autoSku(productId: string, index: number) {
   return `PRD-${short}-${index + 1}`;
 }
 
-/* ==== SKU uniqueness helpers (جديدة) ==== */
+/* ==== SKU uniqueness helpers ==== */
 function uniqueSuffix(i: number) {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   if (i < alphabet.length) return "-" + alphabet[i];
@@ -79,7 +79,6 @@ function uniqueSuffix(i: number) {
   const r = i % alphabet.length;
   return "-" + alphabet[r] + q;
 }
-
 function ensureUniqueSku(base: string, taken: Set<string>) {
   let candidate = base;
   let i = 0;
@@ -91,7 +90,7 @@ function ensureUniqueSku(base: string, taken: Set<string>) {
 }
 
 /* =========================
-   GET: يرجع groups + variants بنفس صيغة المودال
+   GET
    ========================= */
 export async function GET(
   _req: NextRequest,
@@ -157,7 +156,6 @@ export async function GET(
       .select("variant_id, option_value_id")
       .in("variant_id", variantIds);
     if (lErr) return fail("links.load", lErr.message);
-
     for (const l of links ?? []) {
       const arr = byVariantVals.get(l.variant_id) ?? [];
       arr.push(l.option_value_id);
@@ -201,7 +199,7 @@ export async function GET(
 }
 
 /* =========================
-   PATCH: يحفظ groups + variants (يستخدم Service Role)
+   PATCH
    ========================= */
 export async function PATCH(
   req: NextRequest,
@@ -210,7 +208,6 @@ export async function PATCH(
   const { id: productId } = await ctx.params;
   if (!productId) return fail("Missing product id", null, 400);
 
-  // 👇 تسامح: لو الواجهة أرسلت groups كسلسلة JSON
   const raw = await req.json();
   if (typeof raw?.groups === "string") {
     try {
@@ -247,7 +244,7 @@ export async function PATCH(
       preferredBranch ?? null
     );
 
-    // 1) product_options + values
+    // 1) options + values
     const usableGroups = groups.filter((g) => g.values.length > 0);
     const { data: existingOptions } = await supabase
       .from("product_options")
@@ -351,7 +348,6 @@ export async function PATCH(
       .select("id, sku")
       .eq("product_id", productId);
 
-    // SKUs الحالية كي لا نكررها
     const takenSkus = new Set<string>(
       (existingVariants ?? [])
         .map((v) => (v.sku || "").trim())
@@ -426,7 +422,7 @@ export async function PATCH(
       }
 
       await resetVariantLinks(dbVarId!);
-      if (usableGroups.length) {
+      if (groups.length) {
         for (const uiValId of v.optionValueIds) {
           const actualValId = valueIdMap.get(uiValId);
           if (!actualValId) continue;
@@ -445,7 +441,8 @@ export async function PATCH(
 
     const enabled =
       (optionsEnabled ??
-        (usableGroups.length > 0 && normalizedVariants.length > 0)) === true;
+        (groups.filter((g) => g.values.length > 0).length > 0 &&
+          normalizedVariants.length > 0)) === true;
 
     return ok({
       ok: true,

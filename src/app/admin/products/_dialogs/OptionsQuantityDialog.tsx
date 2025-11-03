@@ -40,8 +40,6 @@ export default function OptionsQuantityDialog({
 }) {
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
-
-  // نمط التوليد: بدون دمج افتراضيًا (قائمة لكل خيار)
   const [combineOptions, setCombineOptions] = React.useState(false);
 
   const [enabled, setEnabled] = React.useState(!!product.optionsEnabled);
@@ -53,7 +51,7 @@ export default function OptionsQuantityDialog({
             id: crypto.randomUUID(),
             type: "text",
             name: "مقاسات",
-            values: [], // ⬅️ لا ننشئ قيمة فاضية
+            values: [], // لا ننشئ قيمة فاضية
           },
         ]
   );
@@ -61,13 +59,15 @@ export default function OptionsQuantityDialog({
     product.variants ?? []
   );
 
-  /* ---------- Load from API ---------- */
+  /* ---------- Load from API on open ---------- */
   React.useEffect(() => {
     let alive = true;
     (async () => {
       try {
         setLoading(true);
-        const res = await fetch(`/api/admin/products/${product.id}/options`);
+        const res = await fetch(`/api/admin/products/${product.id}/options`, {
+          cache: "no-store",
+        });
         if (!res.ok) throw new Error(String(res.status));
         const json = await res.json();
 
@@ -113,7 +113,7 @@ export default function OptionsQuantityDialog({
                     id: crypto.randomUUID(),
                     type: "text",
                     name: "مقاسات",
-                    values: [], // ⬅️ لا ننشئ قيمة فاضية
+                    values: [],
                   },
                 ]
           );
@@ -127,7 +127,7 @@ export default function OptionsQuantityDialog({
               id: crypto.randomUUID(),
               type: "text",
               name: "مقاسات",
-              values: [], // ⬅️ لا ننشئ قيمة فاضية
+              values: [],
             },
           ]);
           setVariants([]);
@@ -151,7 +151,7 @@ export default function OptionsQuantityDialog({
         id: crypto.randomUUID(),
         type: "text",
         name: "مقاسات",
-        values: [], // ⬅️ لا ننشئ قيمة فاضية
+        values: [],
       },
     ]);
   }
@@ -188,7 +188,7 @@ export default function OptionsQuantityDialog({
     );
   }
 
-  /* ---------- Variants (per-group) ---------- */
+  /* ---------- Variants (per-value or merged) ---------- */
   function cartesian<T>(arrays: T[][]): T[][] {
     if (!arrays.length) return [];
     return arrays.reduce<T[][]>((acc, curr) => {
@@ -280,9 +280,7 @@ export default function OptionsQuantityDialog({
       .map((g, i) => {
         const hasValues = (g.values ?? []).some((v) => v.label?.trim());
         let name = (g.name ?? "").trim();
-        if (hasValues && name.length === 0) {
-          name = DEFAULT_NAMES[i] ?? "خيار";
-        }
+        if (hasValues && name.length === 0) name = DEFAULT_NAMES[i] ?? "خيار";
         return { ...g, name };
       })
       .filter(
@@ -310,10 +308,7 @@ export default function OptionsQuantityDialog({
   async function saveAll() {
     const sanitized = sanitizeGroupsForSave(groups);
     const valErr = validateBeforeSave(sanitized);
-    if (valErr) {
-      showErr(valErr);
-      return;
-    }
+    if (valErr) return showErr(valErr);
 
     const cleaned = sanitized
       .map((g) => ({
@@ -324,27 +319,24 @@ export default function OptionsQuantityDialog({
       }))
       .filter((g) => (g.values?.length ?? 0) > 0);
 
-    if (cleaned.length === 0) {
-      showErr("أضف قيمة واحدة على الأقل قبل الحفظ.");
-      return;
-    }
+    if (cleaned.length === 0)
+      return showErr("أضف قيمة واحدة على الأقل قبل الحفظ.");
 
     if (!canSave) {
-      showErr(
+      return showErr(
         !hasAtLeastOneValue
           ? "أضف قيمة واحدة على الأقل."
           : invalidQty
           ? "أدخل كمية صحيحة (صفر أو أكثر)."
           : "أكمل الحقول."
       );
-      return;
     }
 
     setSaving(true);
     try {
       const body = {
         optionsEnabled: enabled,
-        groups: cleaned, // ⬅️ كمصفوفة مباشرة
+        groups: cleaned, // كمصفوفة مباشرة
         variants,
         branchId: "3f393dae-bd42-40bb-b77e-5686180d2f25",
       };
@@ -362,23 +354,21 @@ export default function OptionsQuantityDialog({
       } catch {
         try {
           rawText = await res.text();
-        } catch {
-          /* noop */
-        }
+        } catch {}
       }
 
       if (!res.ok || json?.error || json?.success === false) {
-        console.error("PATCH /api/admin/products/[id]/options failed →", {
-          status: res.status,
-          json,
-          rawText,
-        });
         const detail =
           json?.detail ||
           json?.message ||
           json?.error ||
           (json ? JSON.stringify(json, null, 2) : rawText) ||
           `PATCH failed with ${res.status}`;
+        console.error("PATCH /api/admin/products/[id]/options failed →", {
+          status: res.status,
+          json,
+          rawText,
+        });
         showErr(detail);
         return;
       }
