@@ -1,12 +1,15 @@
 // src/app/api/admin/products/options/value/[valueId]/route.ts
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 import { NextResponse } from "next/server";
 import { createServiceRoleSupabase } from "@/lib/supabase/server";
 
 export async function DELETE(
   _req: Request,
-  ctx: { params: Promise<{ valueId: string }> }
+  ctx: { params: { valueId: string } } // ← لا تستخدم Promise هنا
 ) {
-  const { valueId } = await ctx.params;
+  const { valueId } = ctx.params;
   if (!valueId) {
     return NextResponse.json(
       { success: false, message: "Missing valueId" },
@@ -17,14 +20,14 @@ export async function DELETE(
   try {
     const supabase = createServiceRoleSupabase();
 
-    // احذف روابط المتغيرات أولاً
+    // احذف الروابط أولاً
     const { error: delLinks } = await supabase
       .from("variant_option_values")
       .delete()
       .eq("option_value_id", valueId);
     if (delLinks) throw delLinks;
 
-    // ثم احذف القيمة نفسها
+    // احذف القيمة
     const { error: delVal } = await supabase
       .from("product_option_values")
       .delete()

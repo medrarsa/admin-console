@@ -1,12 +1,15 @@
 // src/app/api/admin/products/options/group/[groupId]/route.ts
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 import { NextResponse } from "next/server";
 import { createServiceRoleSupabase } from "@/lib/supabase/server";
 
 export async function DELETE(
   _req: Request,
-  ctx: { params: Promise<{ groupId: string }> }
+  ctx: { params: { groupId: string } } // ← لا تستخدم Promise هنا
 ) {
-  const { groupId } = await ctx.params;
+  const { groupId } = ctx.params;
   if (!groupId) {
     return NextResponse.json(
       { success: false, message: "Missing groupId" },
@@ -26,7 +29,7 @@ export async function DELETE(
 
     const valIds = (vals ?? []).map((v) => v.id);
 
-    // احذف روابط المتغيرات أولاً
+    // احذف روابط المتغيرات
     if (valIds.length) {
       const { error: delLinks } = await supabase
         .from("variant_option_values")
@@ -34,7 +37,7 @@ export async function DELETE(
         .in("option_value_id", valIds);
       if (delLinks) throw delLinks;
 
-      // ثم القيم نفسها
+      // احذف القيم
       const { error: delVals } = await supabase
         .from("product_option_values")
         .delete()
@@ -42,7 +45,7 @@ export async function DELETE(
       if (delVals) throw delVals;
     }
 
-    // أخيرًا احذف المجموعة
+    // احذف المجموعة
     const { error: delGroup } = await supabase
       .from("product_options")
       .delete()
