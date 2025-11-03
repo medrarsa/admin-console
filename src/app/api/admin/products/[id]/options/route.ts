@@ -11,19 +11,22 @@ const ValueSchema = z.object({
   colorHex: z.string().optional(),
   imageUrl: z.string().url().optional(),
 });
+
 const GroupSchema = z.object({
   id: z.string().min(1),
   type: z.enum(["text", "color", "image"]),
   name: z.string().min(1),
   values: z.array(ValueSchema),
 });
+
 const VariantSchema = z.object({
   id: z.string().min(1),
   optionValueIds: z.array(z.string().min(1)).nonempty(),
   sku: z.string().optional().nullable(),
   qty: z.number().int().min(0).default(0),
-  // السعر “اختياري” (سيمر عبر v as any)
+  // السعر اختياري: سيمر كحقل إضافي على الكائن ونقرأه بـ (v as any).price
 });
+
 const PatchBody = z.object({
   optionsEnabled: z.boolean().optional(),
   groups: z.array(GroupSchema),
@@ -34,6 +37,7 @@ const PatchBody = z.object({
 /* ===== Helpers ===== */
 const ok = (body: any, status = 200) =>
   NextResponse.json({ status, success: true, ...body }, { status });
+
 const fail = (message: string, detail?: any, status = 500) =>
   NextResponse.json({ status, success: false, message, detail }, { status });
 
@@ -60,6 +64,7 @@ function autoSku(productId: string, index: number) {
   const short = productId.replace(/-/g, "").slice(0, 4);
   return `PRD-${short}-${index + 1}`;
 }
+
 function uniqueSuffix(i: number) {
   const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   if (i < A.length) return "-" + A[i];
@@ -75,7 +80,9 @@ function ensureUniqueSku(base: string, taken: Set<string>) {
   return candidate;
 }
 
-/* ===== GET (Service-Role) ===== */
+/* =========================
+   GET (Service Role)
+   ========================= */
 export async function GET(
   _req: NextRequest,
   ctx: { params: Promise<{ id: string }> }
@@ -85,6 +92,7 @@ export async function GET(
 
   const supabase = createServiceRoleSupabase();
 
+  // خيارات المنتج
   const { data: optGroups, error: gErr } = await supabase
     .from("product_options")
     .select("id, name, display_type, sort_order")
@@ -92,6 +100,7 @@ export async function GET(
     .order("sort_order", { ascending: true });
   if (gErr) return fail("options.load", gErr.message);
 
+  // قيم الخيارات
   const groupIds = (optGroups ?? []).map((g) => g.id);
   let valuesByGroup = new Map<string, any[]>();
   if (groupIds.length) {
@@ -125,6 +134,7 @@ export async function GET(
     }, new Map<string, any[]>());
   }
 
+  // المتغيرات
   const { data: vars, error: varErr } = await supabase
     .from("product_variants")
     .select("id, sku, created_at")
@@ -133,6 +143,8 @@ export async function GET(
   if (varErr) return fail("variants.load", varErr.message);
 
   const variantIds = (vars ?? []).map((v) => v.id);
+
+  // روابط المتغيرات بالقيم
   let byVariantVals = new Map<string, string[]>();
   if (variantIds.length) {
     const { data: links, error: lErr } = await supabase
@@ -140,6 +152,7 @@ export async function GET(
       .select("variant_id, option_value_id")
       .in("variant_id", variantIds);
     if (lErr) return fail("links.load", lErr.message);
+
     for (const l of links ?? []) {
       const arr = byVariantVals.get(l.variant_id) ?? [];
       arr.push(l.option_value_id);
@@ -147,6 +160,7 @@ export async function GET(
     }
   }
 
+  // الكميات (مجمّعة عبر الفروع)
   let qtyByVariant = new Map<string, number>();
   if (variantIds.length) {
     const { data: inv } = await supabase
@@ -158,6 +172,50 @@ export async function GET(
         (qtyByVariant.get(r.variant_id) ?? 0) + (r.qty_on_hand ?? 0)
       );
     });
+  }
+
+  // آخر سعر لكل متغير (retail) — نستخدم DISTINCT ON
+  let priceByVariant = new Map<string, number>();
+  if (variantIds.length) {
+    const { data: vpErrData, error: vpErr } = await supabase.rpc("exec_sql", {
+      // function exec_sql(text) returns setof record — إن لم تكن موجودة تجاهل هذا القسم واستخدم select عادي.
+      // إن لم يكن لديك RPC عام، استبدل هذا الاستدعاء بجدولين:
+      // 1) fetch all variant_prices for product variants
+      // 2) ثم احسب آخر صف لكل variant_id هنا
+      sql: `
+          SELECT DISTINCT ON (variant_id) variant_id, price
+          FROM variant_prices
+          WHERE variant_id = ANY (ARRAY[${variantIds
+            .map((id) => `'${id}'`)
+            .join(",")}])
+            AND price_type = 'retail'
+          ORDER BY variant_id, created_at DESC
+        `,
+    } as any); // ملاحظة: إذا لا يوجد RPC exec_sql لديك، تجاهل هذا واستعمل الطريقة البديلة أدناه.
+    if (!vpErr && Array.isArray(vpErrData)) {
+      for (const row of vpErrData as any[]) {
+        priceByVariant.set(row.variant_id, Number(row.price));
+      }
+    } else {
+      // طريقة بديلة بدون RPC: اجلب كل الأسعار ثم اختر أحدث سعر لكل variant_id
+      const { data: allPrices } = await supabase
+        .from("variant_prices")
+        .select("variant_id, price, created_at, price_type")
+        .in("variant_id", variantIds)
+        .eq("price_type", "retail");
+      const latest = new Map<string, { price: number; created_at: string }>();
+      for (const p of allPrices ?? []) {
+        const prev = latest.get(p.variant_id);
+        if (!prev || new Date(p.created_at) > new Date(prev.created_at)) {
+          latest.set(p.variant_id, {
+            price: Number(p.price),
+            created_at: p.created_at,
+          });
+        }
+      }
+      for (const [vid, obj] of latest.entries())
+        priceByVariant.set(vid, obj.price);
+    }
   }
 
   const groups = (optGroups ?? []).map((g) => ({
@@ -172,7 +230,7 @@ export async function GET(
     optionValueIds: byVariantVals.get(v.id) ?? [],
     sku: v.sku ?? "",
     qty: qtyByVariant.get(v.id) ?? 0,
-    // مبدئياً لا نُرجع السعر من هنا (مصدره جدول مختلف)
+    price: priceByVariant.get(v.id), // ← نُرجع السعر إن وُجد
   }));
 
   const optionsEnabled =
@@ -180,10 +238,12 @@ export async function GET(
     groups.some((g) => g.values.length > 0) &&
     variants.length > 0;
 
-  return NextResponse.json({ success: true, optionsEnabled, groups, variants });
+  return ok({ success: true, optionsEnabled, groups, variants });
 }
 
-/* ===== PATCH (edit/add + inventory + price) ===== */
+/* =========================
+   PATCH (Service Role)
+   ========================= */
 export async function PATCH(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> }
@@ -218,6 +278,7 @@ export async function PATCH(
     variants,
     branchId: preferredBranch,
   } = parsed.data;
+
   const supabase = createServiceRoleSupabase();
 
   try {
@@ -226,7 +287,7 @@ export async function PATCH(
       preferredBranch ?? null
     );
 
-    // === options + values (UPSERT) ===
+    // 1) options + values (UPSERT)
     const usableGroups = groups.filter((g) => g.values.length > 0);
     const { data: existingOptions } = await supabase
       .from("product_options")
@@ -239,7 +300,6 @@ export async function PATCH(
     for (let idx = 0; idx < usableGroups.length; idx++) {
       const g = usableGroups[idx];
       let dbId = existingOptions?.find((o) => o.id === g.id)?.id;
-
       if (!dbId) {
         const { data, error } = await supabase
           .from("product_options")
@@ -325,7 +385,7 @@ export async function PATCH(
       }
     }
 
-    // === variants + links + inventory ===
+    // 2) variants + links + inventory + price
     const { data: existingVariants } = await supabase
       .from("product_variants")
       .select("id, sku")
@@ -353,6 +413,7 @@ export async function PATCH(
         .eq("variant_id", variantId);
       if (error) throw new Error(`links.reset: ${error.message}`);
     }
+
     async function upsertInventory(variantId: string, qty: number) {
       const { data: inv, error } = await supabase
         .from("variant_inventory")
@@ -382,6 +443,7 @@ export async function PATCH(
     for (const v of normalizedVariants) {
       let dbVarId = existingVariants?.find((ev) => ev.id === v.id)?.id;
 
+      // INSERT/UPDATE variant
       if (!dbVarId) {
         const { data, error } = await supabase
           .from("product_variants")
@@ -403,7 +465,7 @@ export async function PATCH(
         if (error) throw new Error(`variants.update: ${error.message}`);
       }
 
-      // إعادة ربط قيم الخيار
+      // relinks
       await resetVariantLinks(dbVarId!);
       if (groups.length) {
         for (const uiValId of v.optionValueIds) {
@@ -419,21 +481,21 @@ export async function PATCH(
         }
       }
 
-      // الكمية
+      // inventory
       await upsertInventory(dbVarId!, (v as any)?.qty ?? 0);
 
-      // ==== السعر: حذف السعر retail القديم ثم إضافة السعر الجديد (إن وُجد) ====
+      // price (اختياري): لو وصل price، نحفظه كأحدث retail
       const maybePrice = (v as any)?.price;
       if (typeof maybePrice === "number" && !Number.isNaN(maybePrice)) {
-        // احذف أسعار retail السابقة (سلوك بسيط وواضح)
-        await supabase
+        // امسح أسعار retail السابقة لهذا المتغير ثم أضف السعر الجديد
+        const { error: delOld } = await supabase
           .from("variant_prices")
           .delete()
           .eq("variant_id", dbVarId!)
           .eq("price_type", "retail");
+        if (delOld) throw new Error(`variant_prices.delete: ${delOld.message}`);
 
-        // أضف السعر الجديد
-        const { error: priceErr } = await supabase
+        const { error: insPrice } = await supabase
           .from("variant_prices")
           .insert({
             variant_id: dbVarId!,
@@ -442,8 +504,8 @@ export async function PATCH(
             price_type: "retail",
             // starts_at: default now()
           });
-        if (priceErr)
-          throw new Error(`variant_prices.insert: ${priceErr.message}`);
+        if (insPrice)
+          throw new Error(`variant_prices.insert: ${insPrice.message}`);
       }
     }
 
@@ -455,7 +517,7 @@ export async function PATCH(
     return ok({
       ok: true,
       optionsEnabled: enabled,
-      message: "Options, variants & prices saved.",
+      message: "Options, variants, inventory & prices saved.",
     });
   } catch (e: any) {
     return fail("PATCH failed", e?.message || e, 500);
