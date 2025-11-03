@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  createServerSupabase as createSessionServerClient,
+  // createServerSupabase as createSessionServerClient, // لم نعد نستخدمه هنا
   createServiceRoleSupabase,
 } from "@/lib/supabase/server";
 
@@ -90,7 +90,7 @@ function ensureUniqueSku(base: string, taken: Set<string>) {
 }
 
 /* =========================
-   GET
+   GET  (⟵ الآن تحت Service Role لتجاوز RLS)
    ========================= */
 export async function GET(
   _req: NextRequest,
@@ -99,7 +99,8 @@ export async function GET(
   const { id: productId } = await ctx.params;
   if (!productId) return fail("Missing product id", null, 400);
 
-  const supabase = await createSessionServerClient();
+  // اقرأ بصلاحية الخدمة لأننا في مسار إدارة
+  const supabase = createServiceRoleSupabase();
 
   const { data: optGroups, error: gErr } = await supabase
     .from("product_options")
@@ -165,9 +166,10 @@ export async function GET(
 
   let qtyByVariant = new Map<string, number>();
   if (variantIds.length) {
-    const { data: inv } = await supabase
+    const { data: inv, error: invErr } = await supabase
       .from("variant_inventory")
       .select("variant_id, qty_on_hand");
+    if (invErr) return fail("inventory.load", invErr.message);
     inv?.forEach((r) => {
       qtyByVariant.set(
         r.variant_id,
@@ -199,7 +201,7 @@ export async function GET(
 }
 
 /* =========================
-   PATCH
+   PATCH (Service Role)
    ========================= */
 export async function PATCH(
   req: NextRequest,
@@ -208,6 +210,7 @@ export async function PATCH(
   const { id: productId } = await ctx.params;
   if (!productId) return fail("Missing product id", null, 400);
 
+  // تسامح: لو الواجهة أرسلت groups كسلسلة JSON
   const raw = await req.json();
   if (typeof raw?.groups === "string") {
     try {
