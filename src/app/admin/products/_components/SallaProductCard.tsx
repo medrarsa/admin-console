@@ -13,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import MultiTagSelect from "./MultiTagSelect";
+import TaxonTagsField from "./TaxonTagsField"; // ✅ جديد
 import type { Product } from "../ProductsClient";
 
 function cx(...parts: Array<string | false | undefined>) {
@@ -265,6 +266,12 @@ export default function SallaProductCard({
             <option value="lights">أنوار</option>
           </select>
         </div>
+      </div>
+
+      {/* ✅ أئمة/قائمة التصنيف (ربط أقسام المنتج) */}
+      <div className="mb-3">
+        <div className="mb-1 text-[12px] font-bold text-zinc-700">أئمة التصنيف</div>
+        <TaxonTagsField productId={p.id} placeholder="أضف تصنيف" />
       </div>
 
       {/* open product-data modal */}

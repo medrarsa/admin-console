@@ -16,7 +16,7 @@ type Body = {
   name?: string;
   tags?: string[];
   brand?: string | null;     // اسم حر (fallback)
-  brandId?: string | null;   // ✅ جديد: حفظ مباشر
+  brandId?: string | null;   // حفظ مباشر
 
   sku?: string | null;
   costPrice?: number | null;
@@ -31,6 +31,9 @@ type Body = {
   seoTitleTpl?: string | null;
   seoSlugTpl?: string | null;
   seoDescTpl?: string | null;
+
+  // ✅ جديد: ربط الأقسام
+  taxon_ids?: string[];
 };
 
 /* ========= Small helpers ========= */
@@ -249,6 +252,39 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     if (e0) return fail(e0.message, 400, { where: "exists/products" });
     if (!exists?.id) return fail("المنتج غير موجود", 404);
 
+    /* ✅ 0) مزامنة الأقسام (لو وصلت taxon_ids) */
+    if (Array.isArray(body.taxon_ids)) {
+      const ids = body.taxon_ids
+        .filter((x) => typeof x === "string" && x.trim().length > 0);
+
+      // الحالي
+      const { data: currentRows, error: curErr } = await supabase
+        .from("product_taxons")
+        .select("taxon_id")
+        .eq("product_id", product_id);
+      if (curErr) return fail(curErr.message, 400, { where: "select/product_taxons" });
+
+      const current = new Set((currentRows ?? []).map((r: any) => r.taxon_id as string));
+      const next = new Set(ids);
+
+      const toDelete = Array.from(current).filter((x) => !next.has(x));
+      const toInsert = Array.from(next).filter((x) => !current.has(x)).map((taxon_id) => ({ product_id, taxon_id }));
+
+      if (toDelete.length) {
+        const { error: delErr } = await admin
+          .from("product_taxons")
+          .delete()
+          .eq("product_id", product_id)
+          .in("taxon_id", toDelete);
+        if (delErr) return fail(delErr.message, 400, { where: "delete/product_taxons" });
+      }
+
+      if (toInsert.length) {
+        const { error: insErr } = await admin.from("product_taxons").insert(toInsert);
+        if (insErr) return fail(insErr.message, 400, { where: "insert/product_taxons" });
+      }
+    }
+
     // 1) اسم المنتج
     if (typeof body.name === "string") {
       const nm = body.name.trim();
@@ -266,11 +302,10 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     if (typeof body.seoSlugTpl      !== "undefined") prodPatch.seo_slug_tpl     = body.seoSlugTpl;
     if (typeof body.seoDescTpl      !== "undefined") prodPatch.seo_desc_tpl     = body.seoDescTpl;
 
-    // ✅ brandId المباشر أولًا (إن أُرسل)
+    // brandId المباشر أولًا (إن أُرسل) — وإلا upsert بالاسم
     if (typeof body.brandId === "string" && body.brandId?.trim()) {
       prodPatch.brand_id = body.brandId.trim();
     } else if (typeof body.brand !== "undefined") {
-      // fallback: اسم ماركة (upsert)
       const brand_id = await upsertBrand(admin, body.brand);
       prodPatch.brand_id = brand_id;
     }
@@ -429,7 +464,7 @@ export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: str
     if (vars?.length) {
       const vIds = vars.map(v => v.id);
 
-      // ✅ احذف معاملات المخزون أولاً لحلّ FK
+      // احذف معاملات المخزون أولاً لحلّ FK
       await admin.from("variant_inventory_transactions").delete().in("variant_id", vIds);
 
       await admin.from("variant_inventory").delete().in("variant_id", vIds);
