@@ -32,7 +32,7 @@ type Body = {
   seoSlugTpl?: string | null;
   seoDescTpl?: string | null;
 
-  // ✅ جديد: ربط الأقسام
+  // ✅ ربط الأقسام (IDs)
   taxon_ids?: string[];
 };
 
@@ -252,10 +252,17 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     if (e0) return fail(e0.message, 400, { where: "exists/products" });
     if (!exists?.id) return fail("المنتج غير موجود", 404);
 
-    /* ✅ 0) مزامنة الأقسام (لو وصلت taxon_ids) */
+    /* ✅ 0) مزامنة الأقسام مع منع التكرار + upsert */
     if (Array.isArray(body.taxon_ids)) {
-      const ids = body.taxon_ids
-        .filter((x) => typeof x === "string" && x.trim().length > 0);
+      // فَرْد القيم وتطهيرها
+      const ids = Array.from(
+        new Set(
+          body.taxon_ids
+            .filter((x) => typeof x === "string")
+            .map((x) => x.trim())
+            .filter((x) => x.length > 0)
+        )
+      );
 
       // الحالي
       const { data: currentRows, error: curErr } = await supabase
@@ -280,8 +287,11 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
       }
 
       if (toInsert.length) {
-        const { error: insErr } = await admin.from("product_taxons").insert(toInsert);
-        if (insErr) return fail(insErr.message, 400, { where: "insert/product_taxons" });
+        // 🔐 يحمي من الـ duplicate حتى لو وصل نفس الطلب مرتين بسرعة
+        const { error: insErr } = await admin
+          .from("product_taxons")
+          .upsert(toInsert, { onConflict: "product_id,taxon_id" });
+        if (insErr) return fail(insErr.message, 400, { where: "upsert/product_taxons" });
       }
     }
 
@@ -302,7 +312,6 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     if (typeof body.seoSlugTpl      !== "undefined") prodPatch.seo_slug_tpl     = body.seoSlugTpl;
     if (typeof body.seoDescTpl      !== "undefined") prodPatch.seo_desc_tpl     = body.seoDescTpl;
 
-    // brandId المباشر أولًا (إن أُرسل) — وإلا upsert بالاسم
     if (typeof body.brandId === "string" && body.brandId?.trim()) {
       prodPatch.brand_id = body.brandId.trim();
     } else if (typeof body.brand !== "undefined") {
@@ -330,7 +339,6 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     // 4) main variant: cost, sku, prices, qty
     const mainVariantId = await getMainVariantId(supabase, product_id);
     if (mainVariantId) {
-      // cost_price
       if (typeof body.costPrice !== "undefined") {
         const { error: eCost } = await admin
           .from("product_variants")
@@ -339,7 +347,6 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
         if (eCost) return fail(eCost.message, 400, { where: "update/product_variants/cost_price" });
       }
 
-      // sku
       if (typeof body.sku !== "undefined") {
         const { error: eSku } = await admin
           .from("product_variants")
@@ -348,7 +355,6 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
         if (eSku) return fail(eSku.message, 400, { where: "update/product_variants/sku" });
       }
 
-      // prices
       if (
         typeof body.price !== "undefined" ||
         typeof body.salePrice !== "undefined" ||
@@ -385,7 +391,6 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
         }
       }
 
-      // qty (لفرع MAIN)
       if (typeof body.qty !== "undefined") {
         const branchId = await pickBranchId(supabase);
         if (branchId) {
@@ -430,20 +435,15 @@ export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: str
     const { id } = await ctx.params;
     const product_id = id;
 
-    // وجود المنتج
     const { data: exists, error: e0 } = await supabase
       .from("products").select("id").eq("id", product_id).maybeSingle();
     if (e0) return fail(e0.message, 400, { where: "exists/products" });
     if (!exists?.id) return fail("المنتج غير موجود", 404);
 
-    // 1) صور
     await admin.from("product_images").delete().eq("product_id", product_id);
-
-    // 2) وسوم وتصنيفات
     await admin.from("product_tags").delete().eq("product_id", product_id);
     await admin.from("product_taxons").delete().eq("product_id", product_id);
 
-    // 3) خيارات وقيمها + ربطها مع الفاريِنتات
     const { data: opts } = await supabase
       .from("product_options").select("id").eq("product_id", product_id);
     if (opts?.length) {
@@ -458,22 +458,17 @@ export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: str
       await admin.from("product_options").delete().in("id", optIds);
     }
 
-    // 4) الفاريِنتات وأسعارها ومخزونها
     const { data: vars } = await supabase
       .from("product_variants").select("id").eq("product_id", product_id);
     if (vars?.length) {
       const vIds = vars.map(v => v.id);
-
-      // احذف معاملات المخزون أولاً لحلّ FK
       await admin.from("variant_inventory_transactions").delete().in("variant_id", vIds);
-
       await admin.from("variant_inventory").delete().in("variant_id", vIds);
       await admin.from("variant_prices").delete().in("variant_id", vIds);
       await admin.from("variant_option_values").delete().in("variant_id", vIds);
       await admin.from("product_variants").delete().in("id", vIds);
     }
 
-    // 5) أخيرًا: المنتج
     const { error: delErr } = await admin.from("products").delete().eq("id", product_id);
     if (delErr) return fail(delErr.message, 400, { where: "delete/products" });
 
