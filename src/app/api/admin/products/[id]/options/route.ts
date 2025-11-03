@@ -4,31 +4,27 @@ import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceRoleSupabase } from "@/lib/supabase/server";
 
-/* =========================
-   Schemas
-   ========================= */
+/* ========== Schemas ========== */
 const ValueSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
   colorHex: z.string().optional(),
   imageUrl: z.string().url().optional(),
 });
-
 const GroupSchema = z.object({
   id: z.string().min(1),
   type: z.enum(["text", "color", "image"]),
   name: z.string().min(1),
   values: z.array(ValueSchema),
 });
-
 const VariantSchema = z.object({
   id: z.string().min(1),
   optionValueIds: z.array(z.string().min(1)).nonempty(),
   sku: z.string().optional().nullable(),
   qty: z.number().int().min(0).default(0),
-  // price يُمرّر اختيارياً ضمن الجسم وسنقرأه بوضوح (string | number)
+  // price يأتي اختياريًا كـ string أو number
+  price: z.union([z.number(), z.string()]).optional(),
 });
-
 const PatchBody = z.object({
   optionsEnabled: z.boolean().optional(),
   groups: z.array(GroupSchema),
@@ -36,15 +32,16 @@ const PatchBody = z.object({
   branchId: z.string().uuid().optional(),
 });
 
-/* =========================
-   Helpers
-   ========================= */
-const ok = (body: any, status = 200) =>
-  NextResponse.json({ status, success: true, ...body }, { status });
-
-const fail = (message: string, detail?: any, status = 500) =>
-  NextResponse.json({ status, success: false, message, detail }, { status });
-
+/* ========== Helpers ========== */
+function ok(body: any, status = 200) {
+  return NextResponse.json({ status, success: true, ...body }, { status });
+}
+function fail(message: string, detail?: any, status = 500) {
+  return NextResponse.json(
+    { status, success: false, message, detail },
+    { status }
+  );
+}
 function displayTypeOf(t: "text" | "color" | "image") {
   return t;
 }
@@ -63,30 +60,26 @@ async function getOrFirstBranchId(
   if (!data?.length) throw new Error("No branches found");
   return data[0].id as string;
 }
-
 function autoSku(productId: string, index: number) {
   const short = productId.replace(/-/g, "").slice(0, 4);
   return `PRD-${short}-${index + 1}`;
 }
-
 function uniqueSuffix(i: number) {
   const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   if (i < A.length) return "-" + A[i];
-  const q = Math.floor(i / A.length);
-  const r = i % A.length;
+  const q = Math.floor(i / A.length),
+    r = i % A.length;
   return "-" + A[r] + q;
 }
 function ensureUniqueSku(base: string, taken: Set<string>) {
-  let candidate = base,
+  let c = base,
     i = 0;
-  while (taken.has(candidate)) candidate = base + uniqueSuffix(i++);
-  taken.add(candidate);
-  return candidate;
+  while (taken.has(c)) c = base + uniqueSuffix(i++);
+  taken.add(c);
+  return c;
 }
 
-/* =========================
-   GET  (Service Role)
-   ========================= */
+/* ========== GET (Service Role) ========== */
 export async function GET(
   _req: NextRequest,
   ctx: { params: Promise<{ id: string }> }
@@ -96,7 +89,6 @@ export async function GET(
 
   const supabase = createServiceRoleSupabase();
 
-  // 1) product_options
   const { data: optGroups, error: gErr } = await supabase
     .from("product_options")
     .select("id, name, display_type, sort_order")
@@ -104,7 +96,6 @@ export async function GET(
     .order("sort_order", { ascending: true });
   if (gErr) return fail("options.load", gErr.message);
 
-  // 2) product_option_values
   const groupIds = (optGroups ?? []).map((g) => g.id);
   let valuesByGroup = new Map<string, any[]>();
   if (groupIds.length) {
@@ -138,7 +129,6 @@ export async function GET(
     }, new Map<string, any[]>());
   }
 
-  // 3) product_variants
   const { data: vars, error: varErr } = await supabase
     .from("product_variants")
     .select("id, sku, created_at")
@@ -148,7 +138,7 @@ export async function GET(
 
   const variantIds = (vars ?? []).map((v) => v.id);
 
-  // 4) variant_option_values (روابط)
+  // روابط القيم
   let byVariantVals = new Map<string, string[]>();
   if (variantIds.length) {
     const { data: links, error: lErr } = await supabase
@@ -163,7 +153,7 @@ export async function GET(
     }
   }
 
-  // 5) الكميات (مجمّعة على كل الفروع)
+  // الكميات
   let qtyByVariant = new Map<string, number>();
   if (variantIds.length) {
     const { data: inv } = await supabase
@@ -177,7 +167,7 @@ export async function GET(
     });
   }
 
-  // 6) أحدث سعر retail لكل variant (بدون RPC)
+  // أحدث سعر retail
   let priceByVariant = new Map<string, number>();
   if (variantIds.length) {
     const { data: allPrices, error: pErr } = await supabase
@@ -208,7 +198,7 @@ export async function GET(
     values: valuesByGroup.get(g.id) ?? [],
   }));
 
-  const variants = (vars ?? []).map((v) => ({
+  const variantsResp = (vars ?? []).map((v) => ({
     id: v.id,
     optionValueIds: byVariantVals.get(v.id) ?? [],
     sku: v.sku ?? "",
@@ -219,9 +209,9 @@ export async function GET(
   const optionsEnabled =
     groups.length > 0 &&
     groups.some((g) => g.values.length > 0) &&
-    variants.length > 0;
+    variantsResp.length > 0;
 
-  return ok({ success: true, optionsEnabled, groups, variants });
+  return ok({ success: true, optionsEnabled, groups, variants: variantsResp });
 }
 
 /* =========================
@@ -261,8 +251,16 @@ export async function PATCH(
     variants,
     branchId: preferredBranch,
   } = parsed.data;
-
   const supabase = createServiceRoleSupabase();
+
+  // سنعيد لك تقريرًا بما تم حفظه
+  const savedReport: Array<{
+    variant_id: string;
+    sku: string;
+    qty: number;
+    price_received: number | null;
+    price_saved: number | null;
+  }> = [];
 
   try {
     const resolvedBranchId = await getOrFirstBranchId(
@@ -270,7 +268,7 @@ export async function PATCH(
       preferredBranch ?? null
     );
 
-    // ========== 1) options + values (UPSERT) ==========
+    // ========== options + values ==========
     const usableGroups = groups.filter((g) => g.values.length > 0);
     const { data: existingOptions } = await supabase
       .from("product_options")
@@ -368,7 +366,7 @@ export async function PATCH(
       }
     }
 
-    // ========== 2) variants + links + inventory + prices ==========
+    // ========== variants + links + inventory + price ==========
     const { data: existingVariants } = await supabase
       .from("product_variants")
       .select("id, sku")
@@ -380,23 +378,34 @@ export async function PATCH(
         .filter((s) => s.length > 0)
     );
 
-    const normalizedVariants = variants.map((v, i) => {
+    const normalized = variants.map((v, i) => {
       const base =
         v.sku && v.sku.trim().length >= 3
           ? v.sku.trim()
           : autoSku(productId, i);
-      const finalSku = ensureUniqueSku(base, takenSkus);
-      return { ...v, sku: finalSku };
+      const sku = ensureUniqueSku(base, takenSkus);
+      // طبع السعر بوضوح
+      const rawPrice = (v as any)?.price;
+      const priceNum =
+        typeof rawPrice === "string"
+          ? Number(rawPrice.trim())
+          : typeof rawPrice === "number"
+          ? rawPrice
+          : NaN;
+      return {
+        ...v,
+        sku,
+        __priceNum: Number.isNaN(priceNum) ? null : priceNum,
+      };
     });
 
-    async function resetVariantLinks(variantId: string) {
+    async function resetLinks(variantId: string) {
       const { error } = await supabase
         .from("variant_option_values")
         .delete()
         .eq("variant_id", variantId);
       if (error) throw new Error(`links.reset: ${error.message}`);
     }
-
     async function upsertInventory(variantId: string, qty: number) {
       const { data: inv, error } = await supabase
         .from("variant_inventory")
@@ -405,7 +414,6 @@ export async function PATCH(
         .eq("branch_id", resolvedBranchId)
         .maybeSingle();
       if (error) throw new Error(`inventory.load: ${error.message}`);
-
       if (!inv) {
         const { error: ins } = await supabase.from("variant_inventory").insert({
           variant_id: variantId,
@@ -423,10 +431,8 @@ export async function PATCH(
       }
     }
 
-    for (const v of normalizedVariants) {
-      // حافظ على ID القادم من الواجهة (يساوي valueId) لثبات الربط
+    for (const v of normalized) {
       let dbVarId = existingVariants?.find((ev) => ev.id === v.id)?.id;
-
       if (!dbVarId) {
         const { data, error } = await supabase
           .from("product_variants")
@@ -448,8 +454,7 @@ export async function PATCH(
         if (error) throw new Error(`variants.update: ${error.message}`);
       }
 
-      // relink values
-      await resetVariantLinks(dbVarId!);
+      await resetLinks(dbVarId!);
       if (groups.length) {
         for (const uiValId of v.optionValueIds) {
           const actualValId = valueIdMap.get(uiValId);
@@ -464,20 +469,11 @@ export async function PATCH(
         }
       }
 
-      // inventory
       await upsertInventory(dbVarId!, (v as any)?.qty ?? 0);
 
-      // === price: احفظ سعر retail إن وُجد (string | number) ===
-      const rawPrice = (v as any)?.price;
-      const maybePrice =
-        typeof rawPrice === "string"
-          ? Number(rawPrice.trim())
-          : typeof rawPrice === "number"
-          ? rawPrice
-          : NaN;
-
-      if (!Number.isNaN(maybePrice)) {
-        // احذف أي سعر retail سابق لهذا المتغير
+      let priceSaved: number | null = null;
+      if (v.__priceNum != null) {
+        // امسح القديم ثم أضف الجديد
         const { error: delOld } = await supabase
           .from("variant_prices")
           .delete()
@@ -485,29 +481,38 @@ export async function PATCH(
           .eq("price_type", "retail");
         if (delOld) throw new Error(`variant_prices.delete: ${delOld.message}`);
 
-        // أدخل السعر الجديد
         const { error: insPrice } = await supabase
           .from("variant_prices")
           .insert({
             variant_id: dbVarId!,
-            price: maybePrice,
+            price: v.__priceNum,
             currency: "SAR",
             price_type: "retail",
           });
         if (insPrice)
           throw new Error(`variant_prices.insert: ${insPrice.message}`);
+        priceSaved = v.__priceNum;
       }
+
+      savedReport.push({
+        variant_id: dbVarId!,
+        sku: v.sku!,
+        qty: (v as any)?.qty ?? 0,
+        price_received: v.__priceNum,
+        price_saved: priceSaved,
+      });
     }
 
     const enabled =
       (optionsEnabled ??
         (groups.filter((g) => g.values.length > 0).length > 0 &&
-          normalizedVariants.length > 0)) === true;
+          normalized.length > 0)) === true;
 
     return ok({
       ok: true,
       optionsEnabled: enabled,
-      message: "Options, variants, inventory & prices saved.",
+      message: "Saved options, variants, inventory & prices.",
+      savedReport, // 👈 تشخيص مفصّل يُظهر الواقع
     });
   } catch (e: any) {
     return fail("PATCH failed", e?.message || e, 500);
