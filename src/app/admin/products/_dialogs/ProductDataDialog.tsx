@@ -73,9 +73,33 @@ async function fetchBrandsLite(q = "", page = 1, per = 200) {
   sp.set("per", String(per));
   const r = await fetch(`/api/admin/brands?${sp.toString()}`, { cache: "no-store" });
   const j = await r.json();
-  // نعيد فقط ما نحتاجه
   const options = (j?.data ?? []).map((b: any) => ({ id: b.id, name: b.name }));
   return { options, total: j?.total ?? options.length };
+}
+
+/** جلب الوسوم (Lite) */
+async function fetchTagsLite(q = "", page = 1, per = 50) {
+  const sp = new URLSearchParams();
+  if (q) sp.set("q", q);
+  sp.set("page", String(page));
+  sp.set("per", String(per));
+  const r = await fetch(`/api/admin/tags?${sp.toString()}`, { cache: "no-store" });
+  // لو الـ endpoint مو موجود، نخليها ترجع فاضية بدون ما تكسر الصفحة
+  const j = await r.json().catch(() => ({ data: [], total: 0 }));
+  const options = (j?.data ?? []).map((t: any) => ({ id: t.id, name: t.name }));
+  return { options, total: j?.total ?? options.length };
+}
+
+/** إنشاء وسم جديد بالاسم (اختياري) */
+async function createTagByName(name: string) {
+  const r = await fetch(`/api/admin/tags`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j?.success) throw new Error(j?.error || `POST ${r.status}`);
+  return j.data as { id: string; name: string };
 }
 
 /* ===== Component ===== */
@@ -88,10 +112,7 @@ export default function ProductDataDialog({
   // basics
   const [name, setName] = React.useState(product.name);
 
-  /** الماركة: نخزن الاثنين
-   * brandId: من القائمة (المفضّل)
-   * brandName: اسم حرّ (fallback)
-   */
+  /** الماركة: نخزن الاثنين */
   const [brandId, setBrandId] = React.useState<string | null>(null);
   const [brandName, setBrandName] = React.useState<string>(product.brand ?? "");
 
@@ -120,6 +141,15 @@ export default function ProductDataDialog({
   const [brandQ, setBrandQ] = React.useState("");
   const [brandOpts, setBrandOpts] = React.useState<Array<{ id: string; name: string }>>([]);
   const [brandLoading, setBrandLoading] = React.useState(false);
+
+  /* ===== Tags state (جديد) ===== */
+  const [tagsQ, setTagsQ] = React.useState("");
+  const [tagOpts, setTagOpts] = React.useState<Array<{ id: string; name: string }>>([]);
+  const [tagLoading, setTagLoading] = React.useState(false);
+  const [selectedTagIds, setSelectedTagIds] = React.useState<string[]>(
+    Array.isArray((product as any).tagIds) ? ((product as any).tagIds as string[]) : []
+  );
+  const initialTagIdsRef = React.useRef<string[]>(selectedTagIds);
 
   /* ===== fetch fresh on open ===== */
   React.useEffect(() => {
@@ -167,6 +197,16 @@ export default function ProductDataDialog({
         setSeoTitleTpl(d?.seo_title_tpl ?? product.seoTitleTpl ?? "{brand} {category} {name} {years}");
         setSeoSlugTpl(d?.seo_slug_tpl ?? product.seoSlugTpl ?? "{brand}-{name}-{years}");
         setSeoDescTpl(d?.seo_desc_tpl ?? product.seoDescTpl ?? "{sku} — {brand} — {category} — {name}");
+
+        // tags (لو API يرجّعها)
+        if (Array.isArray(d?.tags)) {
+          const ids = d.tags.map((t: any) => t.id).filter(Boolean);
+          setSelectedTagIds(ids);
+          initialTagIdsRef.current = ids;
+        } else if (Array.isArray(d?.tag_ids)) {
+          setSelectedTagIds(d.tag_ids);
+          initialTagIdsRef.current = d.tag_ids;
+        }
       } finally {
         if (mounted) setLoading(false);
       }
@@ -189,6 +229,21 @@ export default function ProductDataDialog({
     return () => { alive = false; };
   }, [brandQ]);
 
+  // جلب الوسوم أثناء البحث
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        setTagLoading(true);
+        const { options } = await fetchTagsLite(tagsQ, 1, 50);
+        if (alive) setTagOpts(options);
+      } finally {
+        if (alive) setTagLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [tagsQ]);
+
   /* ===== build & send patch ===== */
   function buildPatch() {
     const patch: Record<string, any> = {};
@@ -204,7 +259,7 @@ export default function ProductDataDialog({
 
     patch.discountEnd = discountEnd || null;
 
-    // الماركة — نُرسل brandId إن اختير، وإلا نُرسل brand بالنص (لتوافق الخلفية)
+    // الماركة
     if (brandId) {
       patch.brandId = brandId;
     } else {
@@ -218,6 +273,13 @@ export default function ProductDataDialog({
     if (seoTitleTpl !== (product.seoTitleTpl || "")) patch.seoTitleTpl = seoTitleTpl || null;
     if (seoSlugTpl !== (product.seoSlugTpl || "")) patch.seoSlugTpl = seoSlugTpl || null;
     if (seoDescTpl !== (product.seoDescTpl || "")) patch.seoDescTpl = seoDescTpl || null;
+
+    // Tags (نرسل فقط لو تغيّر شيء لتفادي أي تأثير على السريان الحالي)
+    const initial = (initialTagIdsRef.current ?? []).slice().sort().join(",");
+    const current = (selectedTagIds ?? []).slice().sort().join(",");
+    if (initial !== current) {
+      patch.tagIds = selectedTagIds;
+    }
 
     return patch;
   }
@@ -240,6 +302,7 @@ export default function ProductDataDialog({
         seoTitleTpl,
         seoSlugTpl,
         seoDescTpl,
+        ...(patch.tagIds ? { tagIds: selectedTagIds } : {}),
       });
 
       await patchProduct(product.id, patch);
@@ -251,6 +314,41 @@ export default function ProductDataDialog({
       setSaving(false);
     }
   }
+
+  /* ===== محرّر وصف بسيط (بدون مكتبات) ===== */
+  const editorRef = React.useRef<HTMLDivElement>(null);
+
+  function exec(cmd: string, value?: string) {
+    // استخدام document.execCommand — مناسب لوظائف أساسية وبلا تبعيات
+    document.execCommand(cmd, false, value);
+    // تحديث الحالة من الـ DOM
+    const html = editorRef.current?.innerHTML ?? "";
+    setDescHTML(html);
+  }
+
+  function onPaste(e: React.ClipboardEvent<HTMLDivElement>) {
+    // لصق كنص منسّق بسيط مع السماح بالروابط والصور
+    e.preventDefault();
+    const text = e.clipboardData.getData("text/plain");
+    document.execCommand("insertText", false, text);
+  }
+
+  function setLink() {
+    const url = prompt("أدخل رابطًا (URL):");
+    if (url) exec("createLink", url);
+  }
+
+  function insertImageByUrl() {
+    const url = prompt("رابط صورة (URL مباشر):");
+    if (url) exec("insertImage", url);
+  }
+
+  React.useEffect(() => {
+    // ضبط محتوى المحرر عند الفتح/التغيير
+    if (editorRef.current && editorRef.current.innerHTML !== descHTML) {
+      editorRef.current.innerHTML = descHTML || "";
+    }
+  }, [descHTML]);
 
   /* ===== UI ===== */
   if (loading) {
@@ -380,10 +478,129 @@ export default function ProductDataDialog({
                 }}
               />
             </div>
+          </div>
 
-            {/* SKU */}
-            {/* لاحظ: SKU يُدار في كارت المنتج/الفاريِنت غالبًا—هنا أبقيته إن أردته */}
-            {/* <div className="rounded-2xl border border-zinc-200/70 bg-white/80 p-4"> ... </div> */}
+          {/* ===== وصف المنتج (محرّر بسيط) ===== */}
+          <div className="overflow-hidden rounded-2xl border border-zinc-200/70 bg-white/80">
+            <div className="border-b border-zinc-200/70 bg-gradient-to-l from-zinc-50 to-white px-4 py-2.5 text-sm font-bold text-zinc-700">
+              وصف المنتج (محرّر)
+            </div>
+
+            {/* شريط الأدوات */}
+            <div className="flex flex-wrap gap-2 px-4 py-2 text-sm">
+              <button className="rounded-lg border px-2 py-1" onClick={() => exec("formatBlock", "<h2>")}>H2</button>
+              <button className="rounded-lg border px-2 py-1" onClick={() => exec("formatBlock", "<h3>")}>H3</button>
+              <button className="rounded-lg border px-2 py-1" onClick={() => exec("bold")}>غامق</button>
+              <button className="rounded-lg border px-2 py-1" onClick={() => exec("italic")}>مائل</button>
+              <button className="rounded-lg border px-2 py-1" onClick={() => exec("underline")}>سطر</button>
+              <button className="rounded-lg border px-2 py-1" onClick={() => exec("insertUnorderedList")}>• قائمة</button>
+              <button className="rounded-lg border px-2 py-1" onClick={() => exec("insertOrderedList")}>1. قائمة</button>
+              <button className="rounded-lg border px-2 py-1" onClick={setLink}>رابط</button>
+              <button className="rounded-lg border px-2 py-1" onClick={insertImageByUrl}>صورة (رابط)</button>
+              <button className="rounded-lg border px-2 py-1" onClick={() => { if (editorRef.current) { editorRef.current.innerHTML = ""; setDescHTML(""); } }}>مسح</button>
+            </div>
+
+            {/* منطقة التحرير */}
+            <div
+              ref={editorRef}
+              className="m-4 min-h-[160px] rounded-xl border border-zinc-200/70 bg-white px-3 py-2 text-sm outline-none prose prose-zinc rtl:prose-headings:text-right rtl:prose-p:text-right"
+              contentEditable
+              suppressContentEditableWarning
+              dir="rtl"
+              onInput={() => setDescHTML(editorRef.current?.innerHTML ?? "")}
+              onPaste={onPaste}
+              // مبدئيًا يُملأ من useEffect
+            />
+            <div className="px-4 pb-3 text-[11px] text-zinc-500">
+              * يُحفظ كـ <code>products.description_html</code>. للصور المتقدمة/الرفع لاحقًا نضيف Endpoint.
+            </div>
+          </div>
+
+          {/* ===== Tags (وسوم المنتج) ===== */}
+          <div className="overflow-hidden rounded-2xl border border-zinc-200/70 bg-white/80">
+            <div className="border-b border-zinc-200/70 bg-gradient-to-l from-zinc-50 to-white px-4 py-2.5 text-sm font-bold text-zinc-700">
+              الوسوم (Tags)
+            </div>
+            <div className="space-y-3 p-4">
+              {/* Chips المختارة */}
+              <div className="flex flex-wrap gap-2">
+                {selectedTagIds.length === 0 ? (
+                  <span className="text-[12px] text-zinc-500">لا توجد وسوم مضافة.</span>
+                ) : (
+                  selectedTagIds.map((tid) => {
+                    const tag = tagOpts.find(t => t.id === tid);
+                    return (
+                      <span key={tid} className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs">
+                        {tag?.name ?? "وسم"}
+                        <button
+                          className="text-zinc-500 hover:text-red-600"
+                          onClick={() => setSelectedTagIds((prev) => prev.filter(id => id !== tid))}
+                          title="حذف"
+                        >×</button>
+                      </span>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* بحث + اختيار */}
+              <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                <input
+                  className="w-full rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none"
+                  placeholder="ابحث عن وسم…"
+                  value={tagsQ}
+                  onChange={(e) => setTagsQ(e.currentTarget.value)}
+                />
+                <button
+                  className="rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm"
+                  onClick={() => setTagsQ(tagsQ.trim())}
+                  disabled={tagLoading}
+                >
+                  {tagLoading ? "يبحث…" : "تحديث"}
+                </button>
+              </div>
+
+              <div className="grid gap-2 sm:grid-cols-2">
+                <select
+                  className="w-full rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none"
+                  value=""
+                  onChange={(e) => {
+                    const id = e.currentTarget.value;
+                    if (!id) return;
+                    setSelectedTagIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+                  }}
+                >
+                  <option value="">{tagLoading ? "يحمّل الوسوم…" : "— اختر وسمًا —"}</option>
+                  {tagOpts.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+
+                {/* إضافة وسم جديد بالاسم — اختياري */}
+                <button
+                  className="rounded-xl bg-gradient-to-l from-teal-600 to-sky-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                  onClick={async () => {
+                    const nm = (prompt("اسم الوسم الجديد:") || "").trim();
+                    if (!nm) return;
+                    try {
+                      const created = await createTagByName(nm);
+                      // ضفه لقائمة الخيارات وحدده مختارًا
+                      setTagOpts((prev) => prev.some(p => p.id === created.id) ? prev : [...prev, created]);
+                      setSelectedTagIds((prev) => (prev.includes(created.id) ? prev : [...prev, created.id]));
+                      alert("✅ تم إنشاء الوسم وإضافته");
+                    } catch (err: any) {
+                      alert(`تعذّر إنشاء الوسم: ${err?.message || err}`);
+                    }
+                  }}
+                >
+                  + وسم جديد
+                </button>
+              </div>
+
+              <div className="text-[11px] text-zinc-500">
+                * تُحفظ كعلاقات في <code>product_tags(product_id, tag_id)</code>. الواجهة ترسل <code>tagIds</code> فقط.
+              </div>
+            </div>
           </div>
 
           {/* SEO */}
