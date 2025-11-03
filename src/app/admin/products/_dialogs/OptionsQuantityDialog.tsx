@@ -167,11 +167,12 @@ export default function OptionsQuantityDialog({
     ]);
   }
   async function removeGroup(id: string) {
-    // حذف فوري من السيرفر (اختياري). إن لم تكن أضفت الراوت، علّق هذا القسم.
+    // لو عندك مسارات حذف فوري تضمّن product.id في URL
     try {
-      const res = await fetch(`/api/admin/products/options/group/${id}`, {
-        method: "DELETE",
-      });
+      const res = await fetch(
+        `/api/admin/products/${product.id}/options/group/${id}`,
+        { method: "DELETE" }
+      );
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         alert(`فشل حذف المجموعة:\n${j?.message || res.status}`);
@@ -181,8 +182,6 @@ export default function OptionsQuantityDialog({
       alert(`فشل حذف المجموعة:\n${e?.message || e}`);
       return;
     }
-
-    // نظّف الحالة
     setGroups((g) => g.filter((x) => x.id !== id));
   }
   function patchGroup(id: string, patch: Partial<OptionGroup>) {
@@ -190,11 +189,11 @@ export default function OptionsQuantityDialog({
   }
 
   async function removeValue(groupId: string, valId: string) {
-    // حذف فوري من السيرفر (اختياري). إن لم تكن أضفت الراوت، علّق هذا القسم.
     try {
-      const res = await fetch(`/api/admin/products/options/value/${valId}`, {
-        method: "DELETE",
-      });
+      const res = await fetch(
+        `/api/admin/products/${product.id}/options/value/${valId}`,
+        { method: "DELETE" }
+      );
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         alert(`فشل حذف القيمة:\n${j?.message || res.status}`);
@@ -549,63 +548,10 @@ export default function OptionsQuantityDialog({
             </button>
           </div>
 
-          {/* Variants */}
-          {enabled && variants.length > 0 && (
+          {/* Variants — مخفي مؤقتًا */}
+          {false && enabled && variants.length > 0 && (
             <div className="mt-6 rounded-2xl border border-zinc-200 bg-white shadow-sm">
-              <div className="border-b border-zinc-200 px-4 py-2.5 text-sm font-bold text-zinc-700">
-                المتغيرات الناتجة
-              </div>
-              <div className="divide-y divide-zinc-100">
-                {variants.map((v) => (
-                  <div
-                    key={v.id}
-                    className="grid grid-cols-1 gap-3 px-4 py-3 md:grid-cols-[1fr_220px_160px]"
-                  >
-                    <div className="flex items-center text-sm text-zinc-800">
-                      {variantLabel(v)}
-                    </div>
-
-                    <div className="flex items-center">
-                      <input
-                        className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-sm outline-none placeholder:text-zinc-400 focus:ring-2 focus:ring-teal-500/30"
-                        placeholder="SKU (اختياري)"
-                        value={v.sku ?? ""}
-                        onChange={(e) =>
-                          setVariants((arr) =>
-                            arr.map((x) =>
-                              x.id === v.id ? { ...x, sku: e.target.value } : x
-                            )
-                          )
-                        }
-                      />
-                    </div>
-
-                    <div className="flex items-center">
-                      <input
-                        inputMode="numeric"
-                        className="w-28 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-teal-500/30"
-                        placeholder="0"
-                        value={v.qty ?? 0}
-                        onChange={(e) =>
-                          setVariants((arr) =>
-                            arr.map((x) =>
-                              x.id === v.id
-                                ? {
-                                    ...x,
-                                    qty:
-                                      e.target.value === ""
-                                        ? 0
-                                        : +e.target.value,
-                                  }
-                                : x
-                            )
-                          )
-                        }
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
+              {/* القسم مخفي — تركناه كما هو بدون إزالته لتجنّب أي لخبطة */}
             </div>
           )}
 
@@ -716,10 +662,6 @@ function ValuesEditor({
 }
 
 /* ---------- Utility ---------- */
-function variantLabel(v: VariantRow) {
-  // يحاول استخراج اسم القيمة من المجموعات الحالية
-  // (كفاية للعرض داخل المودال)
-  // @ts-ignore - access groups from outer scope is handled in component
-  // (عند الاستخدام الحقيقي داخل المكوّن نمررها عبر الإغلاق)
+function variantLabel(_v: VariantRow) {
   return "متغير";
 }
