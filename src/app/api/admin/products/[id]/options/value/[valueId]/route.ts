@@ -27,7 +27,7 @@ export async function DELETE(
       .eq("option_value_id", valueId);
     if (delLinks) throw delLinks;
 
-    // ثم احذف القيمة نفسها (مقيدة بالـ product عبر join غير متاح، لكن يكفي إزالة القيمة ID نفسها)
+    // ثم احذف القيمة نفسها
     const { error: delVal } = await supabase
       .from("product_option_values")
       .delete()

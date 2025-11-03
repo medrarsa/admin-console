@@ -20,7 +20,7 @@ export async function DELETE(
   try {
     const supabase = createServiceRoleSupabase();
 
-    // احضر القيم التابعة للمجموعة
+    // اجلب القيم التابعة للمجموعة
     const { data: vals, error: valsErr } = await supabase
       .from("product_option_values")
       .select("id")
@@ -45,7 +45,7 @@ export async function DELETE(
       if (delVals) throw delVals;
     }
 
-    // احذف المجموعة نفسها
+    // احذف المجموعة نفسها (مقيدة بالـ product)
     const { error: delGroup } = await supabase
       .from("product_options")
       .delete()
