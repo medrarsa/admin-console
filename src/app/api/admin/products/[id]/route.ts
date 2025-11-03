@@ -15,8 +15,8 @@ const fail = (error: string, status = 400, meta?: any) =>
 type Body = {
   name?: string;
   tags?: string[];
-  brand?: string | null;     // اسم حر (fallback)
-  brandId?: string | null;   // حفظ مباشر
+  brand?: string | null;
+  brandId?: string | null;
 
   sku?: string | null;
   costPrice?: number | null;
@@ -32,7 +32,7 @@ type Body = {
   seoSlugTpl?: string | null;
   seoDescTpl?: string | null;
 
-  // ✅ ربط الأقسام (IDs)
+  /* أقسام المنتج */
   taxon_ids?: string[];
 };
 
@@ -130,6 +130,7 @@ async function buildProductDetails(db: any, product_id: string) {
       )
       .filter(Boolean) as any[];
 
+  /* ===== بقية التفاصيل ===== */
   const { data: variants } = await db
     .from("product_variants")
     .select("id,sku,cost_price,unlimited_quantity")
@@ -177,6 +178,7 @@ async function buildProductDetails(db: any, product_id: string) {
 
   const { data: channelsRaw } = await db.from("product_channels").select("channel").eq("product_id", product_id);
   const channels = (channelsRaw || []).map((c: any) => c.channel);
+
   const { data: ptRaw } = await db.from("product_tags").select("tag_id").eq("product_id", product_id);
   const tagIds = (ptRaw || []).map((x: any) => x.tag_id);
   let tags: { id: string; name: string }[] = [];
@@ -193,7 +195,7 @@ async function buildProductDetails(db: any, product_id: string) {
 
     price: { amount: mainPrice?.price ?? 0, currency: mainPrice?.currency ?? "SAR" },
     sale_price: { amount: mainPrice?.sale_price ?? 0, currency: mainPrice?.currency ?? "SAR" },
-    sale_end: { value: mainPrice?.ends_at ?? null },
+    sale_end: mainPrice?.ends_at ?? null,
     main_cost_price: mainCost,
     quantity,
 
@@ -206,10 +208,7 @@ async function buildProductDetails(db: any, product_id: string) {
 
     brand,
     channels,
-
-    // ← تُستخدم لتعبئة الحقل والبادجات بعد التحديث
     taxons, // [{ id, name }]
-
     tags,
     images:
       (imagesRaw || []).map((im: any) => ({
@@ -258,8 +257,8 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
 /* ========= PATCH ========= */
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
-    const supabase = await createServerSupabase();      // قراءة
-    const admin = createServiceRoleSupabase();          // كتابة محمية بـ RLS
+    const supabase = await createServerSupabase();      // قراءة عامة
+    const admin = createServiceRoleSupabase();          // 🔐 نستخدمه للأقسام + الكتابة
 
     const { id } = await ctx.params;
     const product_id = id;
@@ -269,7 +268,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     if (e0) return fail(e0.message, 400, { where: "exists/products" });
     if (!exists?.id) return fail("المنتج غير موجود", 404);
 
-    /* ✅ 0) مزامنة الأقسام مع منع التكرار + upsert */
+    /* ✅ 0) الأقسام — استخدم admin في القراءة والحذف والإدراج */
     if (Array.isArray(body.taxon_ids)) {
       const ids = Array.from(
         new Set(
@@ -280,32 +279,42 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
         )
       );
 
-      const { data: currentRows, error: curErr } = await supabase
-        .from("product_taxons")
-        .select("taxon_id")
-        .eq("product_id", product_id);
-      if (curErr) return fail(curErr.message, 400, { where: "select/product_taxons" });
-
-      const current = new Set((currentRows ?? []).map((r: any) => r.taxon_id as string));
-      const next = new Set(ids);
-
-      const toDelete = Array.from(current).filter((x) => !next.has(x));
-      const toInsert = Array.from(next).filter((x) => !current.has(x)).map((taxon_id) => ({ product_id, taxon_id }));
-
-      if (toDelete.length) {
-        const { error: delErr } = await admin
+      // لو القائمة فارغة: احذف كل الربوط لهذا المنتج
+      if (ids.length === 0) {
+        const { error: delAllErr } = await admin
           .from("product_taxons")
           .delete()
-          .eq("product_id", product_id)
-          .in("taxon_id", toDelete);
-        if (delErr) return fail(delErr.message, 400, { where: "delete/product_taxons" });
-      }
-
-      if (toInsert.length) {
-        const { error: insErr } = await admin
+          .eq("product_id", product_id);
+        if (delAllErr) return fail(delAllErr.message, 400, { where: "delete/product_taxons/all" });
+      } else {
+        // اقرأ الحالي بعميل الخدمة (RLS-safe)
+        const { data: currentRows, error: curErr } = await admin
           .from("product_taxons")
-          .upsert(toInsert, { onConflict: "product_id,taxon_id" });
-        if (insErr) return fail(insErr.message, 400, { where: "upsert/product_taxons" });
+          .select("taxon_id")
+          .eq("product_id", product_id);
+        if (curErr) return fail(curErr.message, 400, { where: "select/product_taxons" });
+
+        const current = new Set((currentRows ?? []).map((r: any) => r.taxon_id as string));
+        const next = new Set(ids);
+
+        const toDelete = Array.from(current).filter((x) => !next.has(x));
+        const toInsert = Array.from(next).filter((x) => !current.has(x)).map((taxon_id) => ({ product_id, taxon_id }));
+
+        if (toDelete.length) {
+          const { error: delErr } = await admin
+            .from("product_taxons")
+            .delete()
+            .eq("product_id", product_id)
+            .in("taxon_id", toDelete);
+          if (delErr) return fail(delErr.message, 400, { where: "delete/product_taxons" });
+        }
+
+        if (toInsert.length) {
+          const { error: insErr } = await admin
+            .from("product_taxons")
+            .upsert(toInsert, { onConflict: "product_id,taxon_id" });
+          if (insErr) return fail(insErr.message, 400, { where: "upsert/product_taxons" });
+        }
       }
     }
 
