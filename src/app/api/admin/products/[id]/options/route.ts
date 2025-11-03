@@ -24,7 +24,7 @@ const VariantSchema = z.object({
   optionValueIds: z.array(z.string().min(1)).nonempty(),
   sku: z.string().optional().nullable(),
   qty: z.number().int().min(0).default(0),
-  // price سيتم تمريره اختيارياً ضمن الكائن (v as any).price
+  // price قد يأتي ضمن الكائن؛ سنقرأه عبر (v as any).price
 });
 
 const PatchBody = z.object({
@@ -143,7 +143,7 @@ export async function GET(
 
   const variantIds = (vars ?? []).map((v) => v.id);
 
-  // 4) variant_option_values
+  // 4) links
   let byVariantVals = new Map<string, string[]>();
   if (variantIds.length) {
     const { data: links, error: lErr } = await supabase
@@ -172,7 +172,7 @@ export async function GET(
     });
   }
 
-  // 6) latest retail price per variant (بدون RPC)
+  // 6) latest retail price per variant (no RPC)
   let priceByVariant = new Map<string, number>();
   if (variantIds.length) {
     const { data: allPrices, error: pErr } = await supabase
@@ -181,6 +181,8 @@ export async function GET(
       .in("variant_id", variantIds)
       .eq("price_type", "retail");
     if (pErr) return fail("prices.load", pErr.message);
+
+    // احصل على أحدث صف لكل variant_id
     const latest = new Map<string, { price: number; created_at: string }>();
     for (const p of allPrices ?? []) {
       const prev = latest.get(p.variant_id);
@@ -255,7 +257,6 @@ export async function PATCH(
     variants,
     branchId: preferredBranch,
   } = parsed.data;
-
   const supabase = createServiceRoleSupabase();
 
   try {
@@ -374,6 +375,7 @@ export async function PATCH(
         .filter((s) => s.length > 0)
     );
 
+    // نظّف/ولّد SKU فريد
     const normalizedVariants = variants.map((v, i) => {
       const base =
         v.sku && v.sku.trim().length >= 3
@@ -390,7 +392,6 @@ export async function PATCH(
         .eq("variant_id", variantId);
       if (error) throw new Error(`links.reset: ${error.message}`);
     }
-
     async function upsertInventory(variantId: string, qty: number) {
       const { data: inv, error } = await supabase
         .from("variant_inventory")
@@ -418,6 +419,7 @@ export async function PATCH(
     }
 
     for (const v of normalizedVariants) {
+      // اضمن أن id المُرسل نستخدمه لو موجود (حتى تربط الواجهة السعر لنفس المتغير)
       let dbVarId = existingVariants?.find((ev) => ev.id === v.id)?.id;
 
       if (!dbVarId) {
@@ -441,7 +443,7 @@ export async function PATCH(
         if (error) throw new Error(`variants.update: ${error.message}`);
       }
 
-      // relink values
+      // relink option values
       await resetVariantLinks(dbVarId!);
       if (groups.length) {
         for (const uiValId of v.optionValueIds) {
@@ -460,10 +462,17 @@ export async function PATCH(
       // inventory
       await upsertInventory(dbVarId!, (v as any)?.qty ?? 0);
 
-      // price: احفظ آخر retail price لو وصل في الـpayload
-      const maybePrice = (v as any)?.price;
-      if (typeof maybePrice === "number" && !Number.isNaN(maybePrice)) {
-        // نحذف أي أسعار retail سابقة ثم نُدخل السعر الجديد (البساطة أولًا)
+      // price: احفظ السعر إن وُجد في payload (string/number)
+      const rawPrice = (v as any)?.price;
+      const maybePrice =
+        typeof rawPrice === "string"
+          ? Number(rawPrice)
+          : typeof rawPrice === "number"
+          ? rawPrice
+          : NaN;
+
+      if (!Number.isNaN(maybePrice)) {
+        // احذف أسعار retail السابقة ثم أضف السعر الجديد
         const { error: delOld } = await supabase
           .from("variant_prices")
           .delete()
