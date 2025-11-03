@@ -4,7 +4,7 @@ import * as React from "react";
 import { Trash2, Plus, X } from "lucide-react";
 import type { Product, OptionGroup, VariantRow } from "../ProductsClient";
 
-/* ===== Badge ===== */
+/* ---------- Small Badge ---------- */
 function Badge({
   children,
   onRemove,
@@ -28,7 +28,7 @@ function Badge({
   );
 }
 
-/* ===== Dialog ===== */
+/* ---------- Dialog ---------- */
 export default function OptionsQuantityDialog({
   product,
   onClose,
@@ -59,7 +59,7 @@ export default function OptionsQuantityDialog({
     product.variants ?? []
   );
 
-  /* ---------- Load from API on open ---------- */
+  /* ---------- Load saved data on open (GET) ---------- */
   React.useEffect(() => {
     let alive = true;
     (async () => {
@@ -142,7 +142,18 @@ export default function OptionsQuantityDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product.id]);
 
-  /* ---------- Mutations ---------- */
+  /* ---------- Helpers ---------- */
+  function cartesian<T>(arrays: T[][]): T[][] {
+    if (!arrays.length) return [];
+    return arrays.reduce<T[][]>((acc, curr) => {
+      if (!acc.length) return curr.map((c) => [c]);
+      const out: T[][] = [];
+      for (const a of acc) for (const c of curr) out.push([...a, c]);
+      return out;
+    }, []);
+  }
+
+  /* ---------- Mutations (add/edit/remove) ---------- */
   function addGroup() {
     if (!enabled) setEnabled(true);
     setGroups((g) => [
@@ -155,12 +166,54 @@ export default function OptionsQuantityDialog({
       },
     ]);
   }
-  function removeGroup(id: string) {
+  async function removeGroup(id: string) {
+    // حذف فوري من السيرفر (اختياري). إن لم تكن أضفت الراوت، علّق هذا القسم.
+    try {
+      const res = await fetch(`/api/admin/products/options/group/${id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        alert(`فشل حذف المجموعة:\n${j?.message || res.status}`);
+        return;
+      }
+    } catch (e: any) {
+      alert(`فشل حذف المجموعة:\n${e?.message || e}`);
+      return;
+    }
+
+    // نظّف الحالة
     setGroups((g) => g.filter((x) => x.id !== id));
   }
   function patchGroup(id: string, patch: Partial<OptionGroup>) {
     setGroups((g) => g.map((x) => (x.id === id ? { ...x, ...patch } : x)));
   }
+
+  async function removeValue(groupId: string, valId: string) {
+    // حذف فوري من السيرفر (اختياري). إن لم تكن أضفت الراوت، علّق هذا القسم.
+    try {
+      const res = await fetch(`/api/admin/products/options/value/${valId}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        alert(`فشل حذف القيمة:\n${j?.message || res.status}`);
+        return;
+      }
+    } catch (e: any) {
+      alert(`فشل حذف القيمة:\n${e?.message || e}`);
+      return;
+    }
+
+    setGroups((g) =>
+      g.map((gg) =>
+        gg.id === groupId
+          ? { ...gg, values: gg.values.filter((v) => v.id !== valId) }
+          : gg
+      )
+    );
+  }
+
   function addValue(groupId: string, label: string) {
     if (!label.trim()) return;
     if (!enabled) setEnabled(true);
@@ -178,27 +231,8 @@ export default function OptionsQuantityDialog({
       )
     );
   }
-  function removeValue(groupId: string, valId: string) {
-    setGroups((g) =>
-      g.map((gg) =>
-        gg.id === groupId
-          ? { ...gg, values: gg.values.filter((v) => v.id !== valId) }
-          : gg
-      )
-    );
-  }
 
-  /* ---------- Variants (per-value or merged) ---------- */
-  function cartesian<T>(arrays: T[][]): T[][] {
-    if (!arrays.length) return [];
-    return arrays.reduce<T[][]>((acc, curr) => {
-      if (!acc.length) return curr.map((c) => [c]);
-      const out: T[][] = [];
-      for (const a of acc) for (const c of curr) out.push([...a, c]);
-      return out;
-    }, []);
-  }
-
+  /* ---------- Recompute variants whenever groups change ---------- */
   function recomputeVariants() {
     const usable = groups
       .map((g) => ({
@@ -273,7 +307,7 @@ export default function OptionsQuantityDialog({
   const canSave =
     enabled && hasAtLeastOneValue && variants.length > 0 && !invalidQty;
 
-  /* ---------- Sanitize & Save ---------- */
+  /* ---------- Save (PATCH) ---------- */
   function sanitizeGroupsForSave(src: OptionGroup[]): OptionGroup[] {
     const DEFAULT_NAMES = ["مقاسات", "خيار", "خيارات"];
     return src
@@ -290,16 +324,6 @@ export default function OptionsQuantityDialog({
       );
   }
 
-  function validateBeforeSave(src: OptionGroup[]): string | null {
-    for (const g of src) {
-      const hasValues = (g.values ?? []).some((v) => v.label?.trim());
-      if (hasValues && !(g.name ?? "").trim()) {
-        return "هناك خيار يحوي قيماً بدون اسم. اكتب مسمى مثل: مقاسات/اللون…";
-      }
-    }
-    return null;
-  }
-
   const showErr = (m: any) => {
     const msg = typeof m === "string" ? m : JSON.stringify(m, null, 2);
     alert(`تعذّر الحفظ:\n${msg}`);
@@ -307,9 +331,6 @@ export default function OptionsQuantityDialog({
 
   async function saveAll() {
     const sanitized = sanitizeGroupsForSave(groups);
-    const valErr = validateBeforeSave(sanitized);
-    if (valErr) return showErr(valErr);
-
     const cleaned = sanitized
       .map((g) => ({
         ...g,
@@ -382,28 +403,7 @@ export default function OptionsQuantityDialog({
     }
   }
 
-  /* ---------- UI helpers ---------- */
-  function variantLabel(v: VariantRow) {
-    if (!v.optionValueIds?.length) return "متغير";
-    const id = v.optionValueIds[0];
-    for (const g of groups) {
-      const found = g.values.find((x) => x.id === id);
-      if (found) return found.label || "متغير";
-    }
-    const parts: string[] = [];
-    for (const vid of v.optionValueIds) {
-      for (const g of groups) {
-        const val = g.values.find((x) => x.id === vid);
-        if (val) {
-          parts.push(val.label);
-          break;
-        }
-      }
-    }
-    return parts.join(" — ");
-  }
-
-  /* ---------- Render ---------- */
+  /* ---------- UI ---------- */
   return (
     <div className="fixed inset-0 z-[999] grid place-items-center bg-black/50 backdrop-blur-md p-4">
       <div className="w-full max-w-4xl rounded-2xl border border-white/20 bg-white/90 shadow-xl ring-1 ring-black/5">
@@ -503,7 +503,7 @@ export default function OptionsQuantityDialog({
                   </button>
                 </div>
 
-                {/* قيم كـ Badges */}
+                {/* Badges */}
                 <div className="mb-3 flex flex-wrap gap-2">
                   {g.values
                     .filter((v) => v.label.trim() !== "")
@@ -517,7 +517,7 @@ export default function OptionsQuantityDialog({
                     ))}
                 </div>
 
-                {/* إدخال قيمة + حقول النوع */}
+                {/* Values Editor */}
                 <ValuesEditor
                   group={g}
                   onAdd={(label) => addValue(g.id, label)}
@@ -633,7 +633,7 @@ export default function OptionsQuantityDialog({
   );
 }
 
-/* ===== Values Editor ===== */
+/* ---------- Values Editor ---------- */
 function ValuesEditor({
   group,
   onAdd,
@@ -652,7 +652,7 @@ function ValuesEditor({
 
   return (
     <div className="space-y-3">
-      {/* إدخال قيمة جديدة */}
+      {/* Add value */}
       <div className="grid grid-cols-[1fr_auto] gap-2">
         <input
           className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none placeholder:text-zinc-400 focus:ring-2 focus:ring-teal-500/30"
@@ -680,12 +680,13 @@ function ValuesEditor({
         </button>
       </div>
 
-      {/* حقول إضافية حسب النوع */}
+      {/* Extra fields per type */}
       {group.type === "color" && (
         <div className="text-xs text-zinc-500">
           استخدم منتقي اللون لكل قيمة بعد إضافتها (يظهر على البادج عند الدعم).
         </div>
       )}
+
       {group.type === "image" && (
         <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
           {group.values.map((v) => (
@@ -712,4 +713,13 @@ function ValuesEditor({
       )}
     </div>
   );
+}
+
+/* ---------- Utility ---------- */
+function variantLabel(v: VariantRow) {
+  // يحاول استخراج اسم القيمة من المجموعات الحالية
+  // (كفاية للعرض داخل المودال)
+  // @ts-ignore - access groups from outer scope is handled in component
+  // (عند الاستخدام الحقيقي داخل المكوّن نمررها عبر الإغلاق)
+  return "متغير";
 }

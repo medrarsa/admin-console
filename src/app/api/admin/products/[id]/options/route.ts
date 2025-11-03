@@ -2,10 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import {
-  // createServerSupabase as createSessionServerClient, // لم نعد نستخدمه هنا
-  createServiceRoleSupabase,
-} from "@/lib/supabase/server";
+import { createServiceRoleSupabase } from "@/lib/supabase/server";
 
 /* =========================
    Schemas
@@ -90,7 +87,7 @@ function ensureUniqueSku(base: string, taken: Set<string>) {
 }
 
 /* =========================
-   GET  (⟵ الآن تحت Service Role لتجاوز RLS)
+   GET  (Service Role)
    ========================= */
 export async function GET(
   _req: NextRequest,
@@ -99,7 +96,6 @@ export async function GET(
   const { id: productId } = await ctx.params;
   if (!productId) return fail("Missing product id", null, 400);
 
-  // اقرأ بصلاحية الخدمة لأننا في مسار إدارة
   const supabase = createServiceRoleSupabase();
 
   const { data: optGroups, error: gErr } = await supabase
@@ -242,7 +238,8 @@ export async function PATCH(
   const supabase = createServiceRoleSupabase();
 
   try {
-    const branchId = await getOrFirstBranchId(
+    // ✅ أعطيناه اسم مختلف حتى لا يتصادم مع أي تعريف سابق
+    const resolvedBranchId = await getOrFirstBranchId(
       supabase,
       preferredBranch ?? null
     );
@@ -379,14 +376,14 @@ export async function PATCH(
         .from("variant_inventory")
         .select("id, qty_on_hand")
         .eq("variant_id", variantId)
-        .eq("branch_id", branchId)
+        .eq("branch_id", resolvedBranchId) // ✅ استخدام الاسم الجديد
         .maybeSingle();
       if (error) throw new Error(`inventory.load: ${error.message}`);
 
       if (!inv) {
         const { error: ins } = await supabase.from("variant_inventory").insert({
           variant_id: variantId,
-          branch_id: branchId,
+          branch_id: resolvedBranchId, // ✅
           qty_on_hand: qty ?? 0,
           qty_reserved: 0,
         });
