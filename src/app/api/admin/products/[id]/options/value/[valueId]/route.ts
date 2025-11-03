@@ -13,15 +13,24 @@ export async function DELETE(
       { status: 400 }
     );
   }
-  const supabase = createServiceRoleSupabase();
+
   try {
+    const supabase = createServiceRoleSupabase();
+
     // احذف روابط المتغيرات أولاً
-    await supabase
+    const { error: delLinks } = await supabase
       .from("variant_option_values")
       .delete()
       .eq("option_value_id", valueId);
-    // ثم احذف قيمة الخيار
-    await supabase.from("product_option_values").delete().eq("id", valueId);
+    if (delLinks) throw delLinks;
+
+    // ثم احذف القيمة نفسها
+    const { error: delVal } = await supabase
+      .from("product_option_values")
+      .delete()
+      .eq("id", valueId);
+    if (delVal) throw delVal;
+
     return NextResponse.json({ success: true });
   } catch (e: any) {
     return NextResponse.json(

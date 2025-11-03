@@ -13,24 +13,41 @@ export async function DELETE(
       { status: 400 }
     );
   }
-  const supabase = createServiceRoleSupabase();
+
   try {
+    const supabase = createServiceRoleSupabase();
+
     // اجلب القيم التابعة للمجموعة
-    const { data: vals } = await supabase
+    const { data: vals, error: valsErr } = await supabase
       .from("product_option_values")
       .select("id")
       .eq("option_id", groupId);
+    if (valsErr) throw valsErr;
+
     const valIds = (vals ?? []).map((v) => v.id);
 
-    // احذف روابط القيم ثم القيم ثم المجموعة
+    // احذف روابط المتغيرات أولاً
     if (valIds.length) {
-      await supabase
+      const { error: delLinks } = await supabase
         .from("variant_option_values")
         .delete()
         .in("option_value_id", valIds);
-      await supabase.from("product_option_values").delete().in("id", valIds);
+      if (delLinks) throw delLinks;
+
+      // ثم القيم نفسها
+      const { error: delVals } = await supabase
+        .from("product_option_values")
+        .delete()
+        .in("id", valIds);
+      if (delVals) throw delVals;
     }
-    await supabase.from("product_options").delete().eq("id", groupId);
+
+    // أخيرًا احذف المجموعة
+    const { error: delGroup } = await supabase
+      .from("product_options")
+      .delete()
+      .eq("id", groupId);
+    if (delGroup) throw delGroup;
 
     return NextResponse.json({ success: true });
   } catch (e: any) {
