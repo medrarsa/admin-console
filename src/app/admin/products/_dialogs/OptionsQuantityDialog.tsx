@@ -170,14 +170,9 @@ export default function OptionsQuantityDialog({
         `/api/admin/products/${product.id}/options/group/${groupId}`,
         { method: "DELETE" }
       );
-      // حتى لو فشل الراوت لأي سبب، نكمل حذفها من الواجهة
-      if (!res.ok) {
-        await res.json().catch(() => ({}));
-      }
-    } catch {
-      /* تجاهل، نكمل في الواجهة */
-    }
-    // حذف من الحالة (ويبقى حذف نهائي يتم عند الحفظ عبر DELETE-by-omission)
+      if (!res.ok) await res.json().catch(() => ({}));
+    } catch {}
+    // حذف محلي دائمًا + سيُطبَّق نهائيًا عند الحفظ (DELETE-by-omission)
     setGroups((g) => g.filter((x) => x.id !== groupId));
     setRowsByGroup((m) => {
       const c = { ...m };
@@ -209,13 +204,8 @@ export default function OptionsQuantityDialog({
         `/api/admin/products/${product.id}/options/value/${rowId}`,
         { method: "DELETE" }
       );
-      if (!res.ok) {
-        await res.json().catch(() => ({}));
-      }
-    } catch {
-      /* تجاهل */
-    }
-    // تنظيف الحالة محليًا دائمًا
+      if (!res.ok) await res.json().catch(() => ({}));
+    } catch {}
     setRowsByGroup((m) => ({
       ...m,
       [groupId]: (m[groupId] || []).filter((r) => r.id !== rowId),
@@ -393,7 +383,7 @@ export default function OptionsQuantityDialog({
               <span className="me-3 text-xs text-zinc-500 peer-checked:text-teal-700">
                 {enabled ? "مفعّل" : "معطّل"}
               </span>
-              <span className="h-6 w-10 rounded-full bg-zinc-300 peer-checked:bg-teal-500 relative">
+              <span className="h-6 w-10 rounded-full bg-zinc-300 peer-checked:bg-teال-500 relative">
                 <span className="absolute top-1 left-1 h-4 w-4 rounded-full bg-white shadow transition-all peer-checked:left-5" />
               </span>
             </label>
@@ -540,6 +530,30 @@ export default function OptionsQuantityDialog({
                 </div>
               );
             })}
+          </div>
+
+          {/* زر إضافة مجموعة/خيار جديد */}
+          <div className="mt-4">
+            <button
+              type="button"
+              onClick={addGroup}
+              className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium hover:bg-zinc-50"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                className="-ms-0.5"
+              >
+                <path
+                  d="M12 5v14m7-7H5"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                />
+              </svg>
+              إضافة خيار جديد
+            </button>
           </div>
 
           {/* أزرار */}
