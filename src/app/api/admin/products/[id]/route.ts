@@ -612,7 +612,7 @@ export async function DELETE(
     // احذف التوابع المرتبطة
     await admin.from("product_images").delete().eq("product_id", product_id);
     await admin.from("product_tags").delete().eq("product_id", product_id);
-    await admin.from("product_taxons").delete().eq("product_id", product_id); // ← تم تصحيح الاقتباس
+    await admin.from("product_taxons").delete().eq("product_id", product_id);
 
     const { data: opts } = await supabase
       .from("product_options")

@@ -11,6 +11,9 @@ const TinymceEditor = dynamic(
   { ssr: false }
 );
 
+/* ===== Types ===== */
+type BrandOpt = { id: string; name: string };
+
 /* ===== Helpers ===== */
 const money = (v?: number) =>
   typeof v !== "number" || isNaN(v)
@@ -105,7 +108,11 @@ async function patchProduct(id: string, payload: Record<string, any>) {
   return j.data;
 }
 /** جلب الماركات (Lite) */
-async function fetchBrandsLite(q = "", page = 1, per = 200) {
+async function fetchBrandsLite(
+  q = "",
+  page = 1,
+  per = 200
+): Promise<{ options: BrandOpt[]; total: number }> {
   const sp = new URLSearchParams();
   if (q) sp.set("q", q);
   sp.set("page", String(page));
@@ -114,7 +121,10 @@ async function fetchBrandsLite(q = "", page = 1, per = 200) {
     cache: "no-store",
   });
   const j = await r.json();
-  const options = (j?.data ?? []).map((b: any) => ({ id: b.id, name: b.name }));
+  const options: BrandOpt[] = (j?.data ?? []).map((b: any) => ({
+    id: b.id,
+    name: b.name,
+  }));
   return { options, total: j?.total ?? options.length };
 }
 
@@ -275,7 +285,8 @@ export default function ProductDataDialog({
 
   // شارة تأكيد الحفظ (اختياري)
   const [lastSavedAt, setLastSavedAt] = React.useState<string | null>(null);
-  const [refreshingAfterSave, setRefreshingAfterSave] = React.useState(false);
+  const [refreshingAfterSave, setRefreshingAfterSave] =
+    React.useState(false);
 
   // basics
   const [name, setName] = React.useState(product.name);
@@ -283,7 +294,9 @@ export default function ProductDataDialog({
 
   // brand
   const [brandId, setBrandId] = React.useState<string | null>(null);
-  const [brandName, setBrandName] = React.useState<string>(product.brand ?? "");
+  const [brandName, setBrandName] = React.useState<string>(
+    product.brand ?? ""
+  );
 
   // prices
   const [basePrice, setBasePrice] = React.useState<number | undefined>(
@@ -302,9 +315,13 @@ export default function ProductDataDialog({
   );
 
   // SEO/content
-  const [shortTitle, setShortTitle] = React.useState(product.shortTitle ?? "");
+  const [shortTitle, setShortTitle] = React.useState(
+    product.shortTitle ?? ""
+  );
   const [years, setYears] = React.useState(product.years ?? "");
-  const [descHTML, setDescHTML] = React.useState(product.descriptionHtml ?? "");
+  const [descHTML, setDescHTML] = React.useState(
+    product.descriptionHtml ?? ""
+  );
   const [seoTitleTpl, setSeoTitleTpl] = React.useState(
     product.seoTitleTpl ?? "{brand} {category} {name} {years}"
   );
@@ -330,9 +347,7 @@ export default function ProductDataDialog({
 
   /* ===== Brands state ===== */
   const [brandQ, setBrandQ] = React.useState("");
-  const [brandOpts, setBrandOpts] = React.useState<
-    Array<{ id: string; name: string }>
-  >([]);
+  const [brandOpts, setBrandOpts] = React.useState<BrandOpt[]>([]);
   const [brandLoading, setBrandLoading] = React.useState(false);
 
   /* ===== Tags state ===== */
@@ -367,6 +382,16 @@ export default function ProductDataDialog({
 
         if (d?.brand?.id) setBrandId(d.brand.id);
         if (d?.brand?.name) setBrandName(d.brand.name ?? "");
+
+        // inject current brand into options so it appears immediately
+        if (d?.brand?.id && d?.brand?.name) {
+          setBrandOpts((prev) => {
+            const exists = prev.some((o: BrandOpt) => o.id === d.brand.id);
+            return exists
+              ? prev
+              : [{ id: d.brand.id, name: d.brand.name }, ...prev];
+          });
+        }
 
         const firstSku =
           Array.isArray(d?.skus) && d.skus.length ? d.skus[0] : null;
@@ -424,6 +449,11 @@ export default function ProductDataDialog({
           setSelectedTagIds(d.tag_ids);
           initialTagIdsRef.current = d.tag_ids;
         }
+
+        // عند الفتح: إن كان عندنا اسم ماركة ولم يوجد استعلام، اعرضه كاستعلام
+        if ((d?.brand?.name || brandName).trim() && !brandQ.trim()) {
+          setBrandQ((d?.brand?.name || brandName).trim());
+        }
       } finally {
         if (mounted) setLoading(false);
       }
@@ -431,7 +461,8 @@ export default function ProductDataDialog({
     return () => {
       mounted = false;
     };
-  }, [product.id]); // eslint-disable-line
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [product.id]);
 
   // جلب الماركات
   React.useEffect(() => {
@@ -440,7 +471,19 @@ export default function ProductDataDialog({
       try {
         setBrandLoading(true);
         const { options } = await fetchBrandsLite(brandQ, 1, 200);
-        if (alive) setBrandOpts(options);
+
+        // keep current brand visible even if search didn't return it
+        const merged: BrandOpt[] = (() => {
+          if (brandId && brandName) {
+            const exists = options.some((o: BrandOpt) => o.id === brandId);
+            return exists
+              ? options
+              : [{ id: brandId, name: brandName }, ...options];
+          }
+          return options;
+        })();
+
+        if (alive) setBrandOpts(merged);
       } finally {
         if (alive) setBrandLoading(false);
       }
@@ -448,7 +491,7 @@ export default function ProductDataDialog({
     return () => {
       alive = false;
     };
-  }, [brandQ]);
+  }, [brandQ, brandId, brandName]);
 
   // جلب الوسوم (اقتراحات) + تحديث خريطة الأسماء
   type TagOption = { id: string; name: string };
@@ -496,8 +539,12 @@ export default function ProductDataDialog({
 
     patch.discountEnd = discountEnd || null;
 
-    if (brandId) patch.brandId = brandId;
-    else patch.brand = brandName || null;
+    // ربط الماركة: نرسل brandId إن كان محددًا، وإلا نرسل brand كاسم حر
+    if (brandId && brandId !== (product as any).brandId) {
+      patch.brandId = brandId;
+    } else if (!brandId && (brandName || "") !== (product.brand || "")) {
+      patch.brand = brandName || null;
+    }
 
     if (shortTitle !== (product.shortTitle || ""))
       patch.shortTitle = shortTitle || null;
@@ -566,6 +613,8 @@ export default function ProductDataDialog({
       if (typeof fresh?.sku === "string") setSku(fresh.sku);
       if (typeof fresh?.description_html === "string")
         setDescHTML(fresh.description_html);
+      if (fresh?.brand?.id) setBrandId(fresh.brand.id || null);
+      if (fresh?.brand?.name) setBrandName(fresh.brand.name || "");
 
       setLastSavedAt(new Date().toLocaleTimeString());
       alert("✅ تم الحفظ والتأكيد من القاعدة");
@@ -699,54 +748,95 @@ export default function ProductDataDialog({
               />
             </div>
 
-            {/* Brand — قائمة ديناميكية */}
+            {/* Brand — قائمة ديناميكية (مطوّرة) */}
             <div className="rounded-2xl border border-zinc-200/70 bg-white/80 p-4">
-              <label className="mb-1 block text-xs text-zinc-600">
-                الماركة
-              </label>
+              <label className="mb-1 block text-xs text-zinc-600">الماركة</label>
 
-              <input
-                className="mb-2 w-full rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none"
-                placeholder="ابحث عن ماركة…"
-                value={brandQ}
-                onChange={(e) => setBrandQ(e.currentTarget.value)}
-              />
-
-              <select
-                className="w-full rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none"
-                value={brandId ?? ""}
-                onChange={(e) => {
-                  const id = e.currentTarget.value || null;
-                  setBrandId(id);
-                  if (id) {
-                    const hit = brandOpts.find((b) => b.id === id);
-                    setBrandName(hit?.name ?? "");
-                  }
-                }}
-              >
-                <option value="">
-                  {brandLoading ? "يحمّل الماركات…" : "— اختر ماركة —"}
-                </option>
-                {brandOpts.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
-              </select>
-
-              {/* خيار إدخال اسم حرّ */}
-              <div className="mt-2 text-[12px] text-zinc-500">
-                أو اكتب اسمًا حرًّا:
+              {/* شريط بحث + حالة الاستعلام */}
+              <div className="mb-2 flex items-center gap-2">
+                <input
+                  className="flex-1 rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none"
+                  placeholder="ابحث عن ماركة… مثال: DENSO / AISIN"
+                  value={brandQ}
+                  onChange={(e) => setBrandQ(e.currentTarget.value)}
+                />
+                <div className="text-[11px] text-zinc-500 whitespace-nowrap">
+                  {brandLoading ? (
+                    <span>يحمّل…</span>
+                  ) : brandQ.trim() ? (
+                    <span>استعلام: “{brandQ.trim()}”</span>
+                  ) : (
+                    <span className="text-zinc-400">— لا يوجد استعلام —</span>
+                  )}
+                </div>
               </div>
-              <input
-                className="mt-1 w-full rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none"
-                placeholder="مثال: DENSO / AISIN"
-                value={brandName}
-                onChange={(e) => {
-                  setBrandName(e.currentTarget.value);
-                  setBrandId(null);
-                }}
-              />
+
+              {/* نتائج البحث */}
+              <div className="relative">
+                <select
+                  className="w-full rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none"
+                  value={brandId ?? ""}
+                  onChange={(e) => {
+                    const id = e.currentTarget.value || null;
+                    setBrandId(id);
+                    if (id) {
+                      const hit = brandOpts.find((b) => b.id === id);
+                      setBrandName(hit?.name ?? "");
+                    }
+                  }}
+                >
+                  <option value="">
+                    {brandLoading
+                      ? "يحمّل الماركات…"
+                      : "— اختر ماركة من القائمة —"}
+                  </option>
+                  {brandOpts.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+
+                <div className="mt-1 text-[11px] text-zinc-500">
+                  اختر من القائمة أو أدخل اسمًا حرًّا وسيتم ربطه بالمنتج تلقائيًا.
+                </div>
+              </div>
+
+              {/* اسم حرّ (Upsert تلقائي عند الحفظ) */}
+              <div className="mt-3">
+                <label className="mb-1 block text-[11px] text-zinc-500">
+                  أو اكتب اسمًا حرًّا:
+                </label>
+                <input
+                  className="w-full rounded-xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-sm outline-none"
+                  placeholder="مثال: DENSO / AISIN"
+                  value={brandName}
+                  onChange={(e) => {
+                    setBrandName(e.currentTarget.value);
+                    setBrandId(null); // طالما كتب اسم حر نخلي الـId فاضي
+                  }}
+                />
+              </div>
+
+              {/* شارة توضيحية للحالة الحالية */}
+              <div className="mt-2 text-[11px] text-zinc-600">
+                الحالة الحالية:{" "}
+                {brandId ? (
+                  <span>
+                    تم اختيار ماركة:{" "}
+                    <b>
+                      {brandName ||
+                        (brandOpts.find((o) => o.id === brandId)?.name ?? "—")}
+                    </b>
+                  </span>
+                ) : brandName.trim() ? (
+                  <span>
+                    اسم حر: <b>{brandName.trim()}</b> (سيُحفَظ/يُنشأ عند الحفظ)
+                  </span>
+                ) : (
+                  <span className="text-zinc-400">لا توجد ماركة محددة.</span>
+                )}
+              </div>
             </div>
 
             {/* SKU — رقم/معرّف المنتج */}
