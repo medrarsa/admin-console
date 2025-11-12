@@ -26,8 +26,9 @@ import NoOptionsPriceClient from "@/app/(store-components)/products/NoOptionsPri
 import StockBadgeClient from "@/app/(store-components)/products/StockBadgeClient";
 
 /* ===== Helpers ===== */
-// نقرأ من env، ولو مو موجود نطيح على دومين المتجر مباشرة
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://elyavya.com";
+// ضروري تكون في .env.local و Vercel:
+// NEXT_PUBLIC_SITE_URL = https://elyavya.com
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL!;
 
 function getBaseUrl() {
   return SITE_URL;
@@ -46,13 +47,12 @@ type ApiValue = {
   display_value?: string | null;
   image_url?: string | null;
 
-  // ممكن تجي بهذه الأسماء
-  extra_price?: number | string | null; // legacy
-  extra_sale_price?: number | string | null; // legacy
-  list_price?: number | string | null; // route الجديد إن كان مفعّل
-  sale_price?: number | string | null; // route الجديد إن كان مفعّل
-  display_price?: number | string | null; // اختياري
-  qty_total?: number | string | null; // كمية هذه القيمة
+  extra_price?: number | string | null;
+  extra_sale_price?: number | string | null;
+  list_price?: number | string | null;
+  sale_price?: number | string | null;
+  display_price?: number | string | null;
+  qty_total?: number | string | null;
 
   sort_order?: number | null;
 };
@@ -73,7 +73,7 @@ type ApiVariant = {
   price?: number | null;
   sale_price?: number | null;
   ends_at?: string | null;
-  qty_available?: number | null; // 👈 لازم من الراوت
+  qty_available?: number | null;
 };
 type ApiProduct = {
   id: string;
@@ -96,7 +96,7 @@ type PickerValue = {
   value_code?: string | null;
   extra_price?: number | null;
   extra_sale_price?: number | null;
-  qty_total?: number | null; // نمرّرها كما هي
+  qty_total?: number | null;
   sort_order?: number | null;
 };
 type PickerVariant = {
@@ -107,7 +107,7 @@ type PickerVariant = {
   price?: number | null;
   sale_price?: number | null;
   ends_at?: string | null;
-  qty_available?: number | null; // 👈 مهم لحالة بدون مجموعات
+  qty_available?: number | null;
 };
 type PickerGroup = {
   id: string;
@@ -167,7 +167,7 @@ function toPickerProduct(api: ApiProduct): PickerProductData {
     price: typeof v.price === "number" ? v.price : null,
     sale_price: typeof v.sale_price === "number" ? v.sale_price : null,
     ends_at: v.ends_at ?? null,
-    qty_available: typeof v.qty_available === "number" ? v.qty_available : null, // ✅
+    qty_available: typeof v.qty_available === "number" ? v.qty_available : null,
   }));
 
   return {
@@ -189,22 +189,29 @@ function toPickerProduct(api: ApiProduct): PickerProductData {
 /* ===== Data fetch ===== */
 async function fetchProduct(slug: string): Promise<ApiProduct | null> {
   const base = getBaseUrl();
-  const r = await fetch(
-    `${base}/api/store/products?slug=${encodeURIComponent(slug)}`,
-    { cache: "no-store" }
-  );
-  if (!r.ok) return null;
-  const j = await r.json().catch(() => null);
-  return j?.success ? (j.data as ApiProduct) : null;
+  const url = `${base}/api/store/products?slug=${encodeURIComponent(slug)}`;
+
+  try {
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) {
+      console.error("[product-page] fetch not ok", r.status, url);
+      return null;
+    }
+    const j = await r.json().catch(() => null);
+    return j?.success ? (j.data as ApiProduct) : null;
+  } catch (e) {
+    console.error("[product-page] fetch error", e);
+    return null;
+  }
 }
 
 /* ===== SEO ===== */
 export async function generateMetadata({
   params,
 }: {
-  params: Promise<{ slug: string }>; // ✅ Next 15: params Promise
+  params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
-  const { slug: raw } = await params; // ✅ لازم await
+  const { slug: raw } = await params;
   const slug = decodeURIComponent(raw);
   const data = await fetchProduct(slug);
   const title = data?.name ? `${data.name} | المتجر` : "المتجر";
@@ -235,12 +242,29 @@ export async function generateMetadata({
 export default async function ProductPage({
   params,
 }: {
-  params: Promise<{ slug: string }>; // ✅ Next 15: params Promise
+  params: Promise<{ slug: string }>;
 }) {
-  const { slug: raw } = await params; // ✅ لازم await
+  const { slug: raw } = await params;
   const slug = decodeURIComponent(raw);
   const p = await fetchProduct(slug);
-  if (!p) return notFound();
+
+  // بدل notFound، نطبع حالة الديبج
+  if (!p) {
+    return (
+      <div className="container mx-auto px-3 py-10 text-center text-sm text-red-600">
+        <div>DEBUG: المنتج غير موجود للـ slug التالي:</div>
+        <div className="mt-2 font-mono text-xs bg-zinc-100 inline-block px-3 py-1 rounded">
+          {slug}
+        </div>
+        <div className="mt-4 text-zinc-500">
+          تأكد أن نفس الـ slug هذا يعطي
+          {"  "}
+          <code>/api/store/products?slug=...</code> نتيجة <b>success: true</b>{" "}
+          على نفس الدومين.
+        </div>
+      </div>
+    );
+  }
 
   const gallery = p.images?.length ? p.images : p.image ? [p.image] : [];
   const hasDeal = !!p.ends_at && new Date(p.ends_at) > new Date();
@@ -282,7 +306,6 @@ export default async function ProductPage({
           <div className="space-y-1">
             <div className="flex items-center gap-3">
               <PriceDisplayClient initial={initialPrice} />
-              {/* تُحدَّث تلقائيًا من حدث selection-changed (NoOptions/Options) */}
               <StockBadgeClient initial={0} />
             </div>
             <div className="text-[11px] text-zinc-500">Taxes included.</div>
@@ -306,8 +329,6 @@ export default async function ProductPage({
             <SizeGuideButton />
           </div>
 
-          {/* لو فيه مجموعات → نرسم OptionsPicker
-              لو ما فيه مجموعات → نبث السعر/الكمية من المتغيّرات */}
           <div className="rounded-2xl border border-zinc-100 bg-white p-4">
             {pickerProduct.option_groups &&
             pickerProduct.option_groups.length > 0 ? (
@@ -325,7 +346,6 @@ export default async function ProductPage({
             )}
           </div>
 
-          {/* شريط الإضافة للسلة */}
           <div className="rounded-2xl border border-zinc-100 bg-white p-4">
             <ProductAddBar productId={p.id} />
           </div>
