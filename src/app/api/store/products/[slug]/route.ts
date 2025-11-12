@@ -1,4 +1,4 @@
-// src/app/products/[slug]/page.tsx
+// src/app/api/store/products/[slug]/route.ts
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -6,10 +6,13 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { slug: string } }
+  context: { params: Promise<{ slug: string }> }
 ) {
   try {
-    const slug = (params?.slug ?? "").trim();
+    // 👈 هنا ننتظر الـ params لأنه Promise حسب تايب Next الجديد
+    const { slug: rawSlug } = await context.params;
+    const slug = (rawSlug ?? "").trim();
+
     if (!slug) {
       return NextResponse.json(
         { success: false, error: "SLUG_REQUIRED" },
