@@ -26,12 +26,13 @@ import NoOptionsPriceClient from "@/app/(store-components)/products/NoOptionsPri
 import StockBadgeClient from "@/app/(store-components)/products/StockBadgeClient";
 
 /* ===== Helpers ===== */
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+// نقرأ دومين الموقع من env فقط (لا localhost هنا)
+// لازم تكون مضبوطة في .env.local و Vercel:
+// NEXT_PUBLIC_SITE_URL = https://elyavya.com
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL!;
+
 function getBaseUrl() {
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
-  if (process.env.NEXT_PUBLIC_BASE_URL)
-    return process.env.NEXT_PUBLIC_BASE_URL!;
-  return "http://localhost:3000";
+  return SITE_URL;
 }
 
 /* ===== API types ===== */
@@ -205,7 +206,7 @@ export async function generateMetadata({
 }: {
   params: Promise<{ slug: string }>; // ✅ Next 15: params Promise
 }): Promise<Metadata> {
-  const { slug: raw } = await params;         // ✅ لازم await
+  const { slug: raw } = await params; // ✅ لازم await
   const slug = decodeURIComponent(raw);
   const data = await fetchProduct(slug);
   const title = data?.name ? `${data.name} | المتجر` : "المتجر";
@@ -238,7 +239,7 @@ export default async function ProductPage({
 }: {
   params: Promise<{ slug: string }>; // ✅ Next 15: params Promise
 }) {
-  const { slug: raw } = await params;         // ✅ لازم await
+  const { slug: raw } = await params; // ✅ لازم await
   const slug = decodeURIComponent(raw);
   const p = await fetchProduct(slug);
   if (!p) return notFound();
