@@ -7,7 +7,18 @@ import { Gallery, Item } from "react-photoswipe-gallery";
 // تذكير: @import "photoswipe/style.css" في globals.css
 
 export default function ImageGallery({ images }: { images: string[] }) {
-  const safe = Array.isArray(images) ? images.filter(Boolean) : [];
+  // فلترة القيم الفارغة والروابط غير الصحيحة
+  const safe = (Array.isArray(images) ? images : [])
+    .filter(Boolean)
+    .filter((u) => {
+      try {
+        new URL(u);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+
   const [active, setActive] = React.useState(0);
 
   if (safe.length === 0) {
@@ -31,6 +42,7 @@ export default function ImageGallery({ images }: { images: string[] }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [safe.length]);
 
   const [hint, setHint] = React.useState(true);
@@ -38,6 +50,14 @@ export default function ImageGallery({ images }: { images: string[] }) {
     const t = setTimeout(() => setHint(false), 1500);
     return () => clearTimeout(t);
   }, []);
+
+  // معالجة فشل تحميل الصورة (ما يطيح السيرفر)
+  const [mainBroken, setMainBroken] = React.useState(false);
+  const thumbOnError = (i: number) => () => {
+    // لو ثَمبرك فشل، نشيله من اللستة بشكل آمن
+    safe.splice(i, 1);
+    setActive((x) => Math.min(x, Math.max(0, safe.length - 1)));
+  };
 
   return (
     <Gallery
@@ -61,7 +81,7 @@ export default function ImageGallery({ images }: { images: string[] }) {
               const isActive = i === active;
               return (
                 <Item
-                  key={i}
+                  key={src + i}
                   original={src}
                   thumbnail={src}
                   width={w}
@@ -95,8 +115,9 @@ export default function ImageGallery({ images }: { images: string[] }) {
                         ].join(" ")}
                         sizes="200px"
                         priority={i === 0}
+                        unoptimized
+                        onError={thumbOnError(i)}
                       />
-                      {/* مؤشر تفعيل بسيط ومحايد */}
                       {isActive && (
                         <span className="absolute inset-x-0 bottom-0 h-[2px] bg-zinc-900" />
                       )}
@@ -116,30 +137,38 @@ export default function ImageGallery({ images }: { images: string[] }) {
             onMouseLeave={() => setHint(false)}
             onTouchStart={() => setHint(true)}
           >
-            {/* حافة ناعمة جداً */}
             <div className="pointer-events-none absolute inset-0 rounded-3xl ring-1 ring-black/[0.03]" />
 
             {/* الصورة الرئيسية */}
             <Item original={main} thumbnail={main} {...guessSize(main)}>
               {({ ref, open }) => (
-                <Image
-                  ref={ref as any}
-                  key={main}
-                  src={main}
-                  alt="صورة المنتج"
-                  fill
-                  className="object-cover transition-transform duration-500 group-hover:scale-[1.02] cursor-zoom-in"
-                  sizes="800px"
-                  priority
-                  onClick={(e) => open(e)}
-                />
+                <>
+                  {!mainBroken ? (
+                    <Image
+                      ref={ref as any}
+                      key={main}
+                      src={main}
+                      alt="صورة المنتج"
+                      fill
+                      className="object-cover transition-transform duration-500 group-hover:scale-[1.02] cursor-zoom-in"
+                      sizes="800px"
+                      priority
+                      unoptimized
+                      onError={() => setMainBroken(true)}
+                      onClick={(e) => open(e)}
+                    />
+                  ) : (
+                    <div className="grid h-full w-full place-items-center text-zinc-400">
+                      Image not available
+                    </div>
+                  )}
+                </>
               )}
             </Item>
 
-            {/* أسهم سوداء فاخرة */}
+            {/* أسهم */}
             {safe.length > 1 && (
               <>
-                {/* التالي (يمين) */}
                 <button
                   type="button"
                   onClick={(e) => {
@@ -172,7 +201,6 @@ export default function ImageGallery({ images }: { images: string[] }) {
                       height="18"
                       viewBox="0 0 24 24"
                       fill="none"
-                      xmlns="http://www.w3.org/2000/svg"
                       className="ltr:rotate-0 rtl:rotate-180"
                     >
                       <path
@@ -186,7 +214,6 @@ export default function ImageGallery({ images }: { images: string[] }) {
                   </span>
                 </button>
 
-                {/* السابق (يسار) */}
                 <button
                   type="button"
                   onClick={(e) => {
@@ -219,7 +246,6 @@ export default function ImageGallery({ images }: { images: string[] }) {
                       height="18"
                       viewBox="0 0 24 24"
                       fill="none"
-                      xmlns="http://www.w3.org/2000/svg"
                       className="ltr:rotate-180 rtl:rotate-0"
                     >
                       <path
@@ -235,7 +261,7 @@ export default function ImageGallery({ images }: { images: string[] }) {
               </>
             )}
 
-            {/* نقاط التقدم – محايدة */}
+            {/* نقاط التقدم */}
             {safe.length > 1 && (
               <div className="pointer-events-none absolute inset-x-0 bottom-3 flex items-center justify-center gap-2">
                 {safe.map((_, i) => (
@@ -250,7 +276,6 @@ export default function ImageGallery({ images }: { images: string[] }) {
               </div>
             )}
 
-            {/* ظل سفلي لطيف */}
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/10 to-transparent" />
           </div>
         </section>

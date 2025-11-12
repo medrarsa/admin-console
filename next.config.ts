@@ -5,23 +5,31 @@ const nextConfig = {
   eslint: { ignoreDuringBuilds: true },
   images: {
     remotePatterns: [
-      // مشروع Supabase المحدد (مسار Public Storage)
+      // مشروع Supabase المحدّد (Public Storage)
       {
         protocol: "https",
         hostname: "tftpjgbnxauldxrnlevb.supabase.co",
         pathname: "/storage/v1/object/public/**",
       },
-      // أي مشروع Supabase (عامًا)
+      // أي مشروع Supabase (عام)
       {
         protocol: "https",
         hostname: "**.supabase.co",
+        pathname: "/storage/v1/object/**",
       },
+
+      // صور داخلية من نفس الدومين
+      { protocol: "https", hostname: "elyavya.com", pathname: "/**" },
+
       // مزودات شائعة
-      { protocol: "https", hostname: "cdn.salla.sa" },
-      { protocol: "https", hostname: "picsum.photos" },
-      { protocol: "https", hostname: "**.cloudfront.net" },
-      { protocol: "https", hostname: "*.amazonaws.com" },
-      { protocol: "https", hostname: "res.cloudinary.com" },
+
+      { protocol: "https", hostname: "picsum.photos", pathname: "/**" },
+      { protocol: "https", hostname: "**.cloudfront.net", pathname: "/**" },
+
+      { protocol: "https", hostname: "res.cloudinary.com", pathname: "/**" },
+      // لو عندك مصادر ثانية فعلها هنا:
+      // { protocol: "https", hostname: "lh3.googleusercontent.com", pathname: "/**" },
+      // { protocol: "https", hostname: "images.unsplash.com", pathname: "/**" },
     ],
     formats: ["image/avif", "image/webp"],
   },
