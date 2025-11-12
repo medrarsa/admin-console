@@ -5,7 +5,6 @@ export const dynamic = "force-dynamic";
 import * as React from "react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { headers } from "next/headers";
 
 /* Server components */
 import ImageGallery from "@/app/(store-components)/products/ImageGallery";
@@ -27,28 +26,12 @@ import NoOptionsPriceClient from "@/app/(store-components)/products/NoOptionsPri
 import StockBadgeClient from "@/app/(store-components)/products/StockBadgeClient";
 
 /* ===== Helpers ===== */
-/** نرجّع عنوان الموقع بشكل مضمون في كل البيئات */
-function getSiteUrl() {
-  // 1) ثابت من env (مفضل)
-  if (process.env.NEXT_PUBLIC_SITE_URL) return process.env.NEXT_PUBLIC_SITE_URL;
-  // 2) Vercel URL (بديل شائع)
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
-  // 3) اشتقاق من الهيدرز (يشتغل على الإنتاج/البريفيو)
-  try {
-    const h = headers();
-    const host = h.get("x-forwarded-host") || h.get("host");
-    const proto = h.get("x-forwarded-proto") || "https";
-    if (host) return `${proto}://${host}`;
-  } catch {
-    // لا شيء
-  }
-  // 4) Dev فقط
-  return "http://localhost:3000";
-}
-
-/** نفس القيمة للاستخدام مع النداءات الداخلية */
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.elyavya.com";
 function getBaseUrl() {
-  return getSiteUrl();
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  if (process.env.NEXT_PUBLIC_BASE_URL)
+    return process.env.NEXT_PUBLIC_BASE_URL!;
+  return "https://www.elyavya.com";
 }
 
 /* ===== API types ===== */
@@ -225,19 +208,16 @@ export async function generateMetadata({
   const { slug: raw } = await params; // ✅ لازم await
   const slug = decodeURIComponent(raw);
   const data = await fetchProduct(slug);
-
-  const site = getSiteUrl(); // 👈 استخدم نفس الدالة هنا
   const title = data?.name ? `${data.name} | المتجر` : "المتجر";
   const description = data?.brand_name
     ? `${data.brand_name} — ${data?.name}`
     : data?.name ?? "Product";
-  const canonical = `${site}/products/${slug}`;
+  const canonical = `${SITE_URL}/products/${slug}`;
   const imgs = Array.isArray(data?.images)
     ? data!.images
     : data?.image
     ? [data.image]
     : [];
-
   return {
     title,
     description,
