@@ -2,18 +2,18 @@
 "use client";
 
 import * as React from "react";
+
 import Modal from "./_components/Modal";
 import FreeShippingModal from "./_components/FreeShippingModal";
 import CODModal from "./_components/CODModal";
 import CarriersOptionsModal from "./_components/CarriersOptionsModal";
 import CarrierCODsModal from "./_components/CarrierCODsModal";
 import PriceCalculatorModal from "./_components/PriceCalculatorModal";
-import CarriersManagerModal from "./_components/CarriersManagerModal";
 import ZonesManagerModal from "./_components/ZonesManagerModal";
 import AddCarrierModal from "./_components/AddCarrierModal";
+import CompanyCityPricingModal from "./_components/CompanyCityPricingModal"; // ← بوب-أب ربط الشركة ببلدان/مدن بأسعار
 
 type Sheet =
-  | "manage-carriers"
   | "manage-zones"
   | "free"
   | "cod"
@@ -21,22 +21,23 @@ type Sheet =
   | "carrier-cods"
   | "price"
   | null;
-type CarrierCard = {
-  id: string;
-  name: string;
-  logo?: string;
-  active: boolean;
-  support_cod?: boolean;
-};
+type CarrierCard = { id: string; name: string; active: boolean };
 
 export default function ShippingIndex() {
   const [open, setOpen] = React.useState<Sheet>(null);
+
   const [showAdd, setShowAdd] = React.useState(false);
   const [editing, setEditing] = React.useState<CarrierCard | null>(null);
+
+  const [openCompanyPricing, setOpenCompanyPricing] = React.useState<null | {
+    id: string;
+    name: string;
+  }>(null);
+
   const [cards, setCards] = React.useState<CarrierCard[]>([]);
   const [loading, setLoading] = React.useState(true);
 
-  // تحميل الشركات من الـ API عند الفتح
+  // جلب شركات الشحن
   React.useEffect(() => {
     (async () => {
       try {
@@ -50,11 +51,8 @@ export default function ShippingIndex() {
             id: x.id,
             name: x.name,
             active: !!x.is_active,
-            support_cod: !!x.support_cod,
           }))
         );
-      } catch {
-        // تجاهل مؤقتًا
       } finally {
         setLoading(false);
       }
@@ -64,8 +62,8 @@ export default function ShippingIndex() {
   const addCarrier = (c: CarrierCard) => setCards((xs) => [c, ...xs]);
   const updateCarrier = (c: CarrierCard) =>
     setCards((xs) => xs.map((x) => (x.id === c.id ? c : x)));
-  const deleteCarrier = async (id: string) => {
-    // تفاؤلي
+
+  const delCarrier = async (id: string) => {
     const prev = cards;
     setCards((xs) => xs.filter((x) => x.id !== id));
     try {
@@ -75,9 +73,8 @@ export default function ShippingIndex() {
     }
   };
 
-  const toggleCarrier = async (c: CarrierCard) => {
+  const toggle = async (c: CarrierCard) => {
     const next = !c.active;
-    // تفاؤلي
     setCards((xs) =>
       xs.map((x) => (x.id === c.id ? { ...x, active: next } : x))
     );
@@ -85,14 +82,9 @@ export default function ShippingIndex() {
       await fetch(`/api/admin/shipping/companies/${c.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: c.name,
-          active: next,
-          support_cod: !!c.support_cod,
-        }),
+        body: JSON.stringify({ name: c.name, active: next }),
       });
     } catch {
-      // رجوع
       setCards((xs) =>
         xs.map((x) => (x.id === c.id ? { ...x, active: !next } : x))
       );
@@ -129,7 +121,7 @@ export default function ShippingIndex() {
 
   return (
     <main className="px-6 py-8" dir="rtl">
-      {/* هيدر + زر إضافة */}
+      {/* الهيدر */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">إعدادات شركات الشحن</h1>
         <button
@@ -140,7 +132,7 @@ export default function ShippingIndex() {
         </button>
       </div>
 
-      {/* كروت الشركات */}
+      {/* كروت الشركات — اضغط البطاقة لفتح تسعير المدن للشركة */}
       <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
         {loading ? (
           Array.from({ length: 3 }).map((_, i) => (
@@ -157,7 +149,8 @@ export default function ShippingIndex() {
           cards.map((c) => (
             <div
               key={c.id}
-              className="rounded-2xl border p-4 flex items-center justify-between"
+              className="rounded-2xl border p-4 flex items-center justify-between cursor-pointer hover:bg-zinc-50"
+              onClick={() => setOpenCompanyPricing({ id: c.id, name: c.name })}
             >
               <div className="flex items-center gap-3">
                 <div className="h-10 w-10 rounded-xl border grid place-items-center">
@@ -172,19 +165,28 @@ export default function ShippingIndex() {
                       ? "bg-emerald-50 border-emerald-200 text-emerald-700"
                       : ""
                   }`}
-                  onClick={() => toggleCarrier(c)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggle(c);
+                  }}
                 >
                   {c.active ? "تعطيل" : "تفعيل"}
                 </button>
                 <button
                   className="rounded-lg px-3 py-1.5 border hover:bg-zinc-50"
-                  onClick={() => setEditing(c)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEditing(c);
+                  }}
                 >
                   تعديل
                 </button>
                 <button
                   className="rounded-lg px-3 py-1.5 border text-red-600 hover:bg-red-50"
-                  onClick={() => deleteCarrier(c.id)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    delCarrier(c.id);
+                  }}
                 >
                   حذف
                 </button>
@@ -194,53 +196,47 @@ export default function ShippingIndex() {
         )}
       </div>
 
-      {/* بطاقات الإعدادات */}
+      {/* بطاقات إعدادات عامة */}
       <div className="space-y-3">
-        <Tile
-          icon={<span className="text-xl">🏷️</span>}
-          title="شركات الشحن"
-          desc="إضافة/تعديل الشركات وربطها بطرق الشحن وتسعير المناطق"
-          onClick={() => setOpen("manage-carriers")}
-        />
         <Tile
           icon={<span className="text-xl">🗺️</span>}
           title="المناطق والمدن"
-          desc="تعريف المناطق (A/B/C) وربط مدن كل منطقة — بدون وزن"
+          desc="تعريف المناطق وربط المدن — بدون وزن"
           onClick={() => setOpen("manage-zones")}
         />
         <Tile
           icon={<span className="text-xl">🆓</span>}
           title="الشحن المجاني"
-          desc="تحكم بإعدادات وشروط الشحن المجاني لعملاء متجرك"
+          desc="شروط الشحن المجاني"
           onClick={() => setOpen("free")}
         />
         <Tile
           icon={<span className="text-xl">💵</span>}
           title="الدفع عند الاستلام"
-          desc="حدّد شروط الدفع عند الاستلام والتصنيفات المستثناة"
+          desc="شروط COD"
           onClick={() => setOpen("cod")}
         />
         <Tile
           icon={<span className="text-xl">🚚</span>}
           title="خيارات شركات الشحن"
-          desc="تفعيل/تعطيل الخيارات، تحديث حالة الطلب، ومزامنة الكميات"
+          desc="تفعيل/تعطيل ومزامنة"
           onClick={() => setOpen("opts")}
         />
         <Tile
           icon={<span className="text-xl">📑</span>}
           title="قيود شركات الشحن"
-          desc="إضافة قيود محددة لشركات الشحن المدعومة في متجرك"
+          desc="قيود عامة"
           onClick={() => setOpen("carrier-cods")}
         />
         <Tile
           icon={<span className="text-xl">🧮</span>}
           title="حاسبة أسعار الشحن"
-          desc="حدّد وجهة الشحنة لحساب التكلفة التقريبية (بدون وزن)"
+          desc="حساب تقريبي"
           onClick={() => setOpen("price")}
         />
       </div>
 
-      {/* مودال إضافة شركة */}
+      {/* مودال: إضافة شركة */}
       <Modal
         open={showAdd}
         onClose={() => setShowAdd(false)}
@@ -249,14 +245,14 @@ export default function ShippingIndex() {
         <AddCarrierModal
           mode="create"
           onCancel={() => setShowAdd(false)}
-          onSaved={(payload) => {
-            addCarrier(payload);
+          onSaved={(p) => {
+            addCarrier(p);
             setShowAdd(false);
           }}
         />
       </Modal>
 
-      {/* مودال تعديل شركة */}
+      {/* مودال: تعديل شركة */}
       <Modal
         open={!!editing}
         onClose={() => setEditing(null)}
@@ -267,22 +263,34 @@ export default function ShippingIndex() {
             mode="edit"
             initial={editing}
             onCancel={() => setEditing(null)}
-            onSaved={(payload) => {
-              updateCarrier(payload);
+            onSaved={(p) => {
+              updateCarrier(p);
               setEditing(null);
             }}
           />
         )}
       </Modal>
 
-      {/* باقي المودالات كما هي */}
+      {/* مودال: تسعير المدن للشركة (ربط بلد/مدن بأسعار فقط) */}
       <Modal
-        open={open === "manage-carriers"}
-        onClose={() => setOpen(null)}
-        title="شركات الشحن"
+        open={!!openCompanyPricing}
+        onClose={() => setOpenCompanyPricing(null)}
+        title={
+          openCompanyPricing
+            ? `تسعير المدن — ${openCompanyPricing.name}`
+            : "تسعير المدن"
+        }
       >
-        <CarriersManagerModal onClose={() => setOpen(null)} />
+        {openCompanyPricing && (
+          <CompanyCityPricingModal
+            companyId={openCompanyPricing.id}
+            companyName={openCompanyPricing.name}
+            onClose={() => setOpenCompanyPricing(null)}
+          />
+        )}
       </Modal>
+
+      {/* مودالات الإعدادات العامة */}
       <Modal
         open={open === "manage-zones"}
         onClose={() => setOpen(null)}

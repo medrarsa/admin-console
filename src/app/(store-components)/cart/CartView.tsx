@@ -1,5 +1,4 @@
 "use client";
-
 import * as React from "react";
 import CartItemCard from "./CartItemCard";
 import OrderSidebar from "./OrderSidebar";
@@ -15,15 +14,23 @@ type CartItem = {
   label_text?: string | null;
   snapshot?: any;
 };
-type Totals = { subtotal: number; discount: number; grand: number };
+type Totals = {
+  subtotal: number;
+  discount: number;
+  shipping: number;
+  grand: number;
+};
 type CartData = { cart_id: string | null; items: CartItem[]; totals: Totals };
 
 export default function CartView() {
   const [loading, setLoading] = React.useState(true);
   const [data, setData] = React.useState<CartData | null>(null);
   const [err, setErr] = React.useState<string | null>(null);
+  const loadingRef = React.useRef(false);
 
   const load = React.useCallback(async () => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
     setLoading(true);
     setErr(null);
     try {
@@ -34,6 +41,7 @@ export default function CartView() {
     } catch (e: any) {
       setErr(e?.message || "تعذر جلب السلة");
     } finally {
+      loadingRef.current = false;
       setLoading(false);
     }
   }, []);
@@ -42,27 +50,35 @@ export default function CartView() {
     load();
     const onUpdated = () => load();
     window.addEventListener("cart-updated", onUpdated as EventListener);
-    return () => window.removeEventListener("cart-updated", onUpdated as EventListener);
+    window.addEventListener("coupons:changed", onUpdated as EventListener);
+    return () => {
+      window.removeEventListener("cart-updated", onUpdated as EventListener);
+      window.removeEventListener("coupons:changed", onUpdated as EventListener);
+    };
   }, [load]);
 
   const onQtyChange = async (cartItemId: string, qty: number) => {
-    const r = await fetch("/api/store/cart/update", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ cartItemId, qty }),
-    });
-    const j = await r.json();
-    if (j?.success) window.dispatchEvent(new CustomEvent("cart-updated"));
+    try {
+      const r = await fetch("/api/store/cart/update", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cartItemId, qty }),
+      });
+      const j = await r.json();
+      if (j?.success) window.dispatchEvent(new CustomEvent("cart-updated"));
+    } catch {}
   };
 
   const onRemove = async (cartItemId: string) => {
-    const r = await fetch("/api/store/cart/remove", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ cartItemId }),
-    });
-    const j = await r.json();
-    if (j?.success) window.dispatchEvent(new CustomEvent("cart-updated"));
+    try {
+      const r = await fetch("/api/store/cart/remove", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cartItemId }),
+      });
+      const j = await r.json();
+      if (j?.success) window.dispatchEvent(new CustomEvent("cart-updated"));
+    } catch {}
   };
 
   if (loading) {
@@ -76,24 +92,35 @@ export default function CartView() {
       </div>
     );
   }
-  if (err) {
-    return <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">{err}</div>;
-  }
+  if (err)
+    return (
+      <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">
+        {err}
+      </div>
+    );
 
   const items = data?.items ?? [];
-  const totals = data?.totals ?? { subtotal: 0, discount: 0, grand: 0 };
+  const totals: Totals = data?.totals ?? {
+    subtotal: 0,
+    discount: 0,
+    shipping: 0,
+    grand: 0,
+  };
 
   return (
     <div className="grid gap-6 md:grid-cols-[320px_1fr]" dir="rtl">
-      {/* يسار الصفحة */}
       <OrderSidebar totals={totals} />
-      {/* يمين الصفحة */}
       <section className="space-y-4">
         {items.length === 0 ? (
           <div className="rounded-2xl border p-6 text-zinc-500">سلتك فارغة</div>
         ) : (
           items.map((it) => (
-            <CartItemCard key={it.id} item={it} onQtyChange={onQtyChange} onRemove={onRemove} />
+            <CartItemCard
+              key={it.id}
+              item={it}
+              onQtyChange={onQtyChange}
+              onRemove={onRemove}
+            />
           ))
         )}
       </section>
