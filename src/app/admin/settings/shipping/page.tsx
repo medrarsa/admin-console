@@ -8,11 +8,9 @@ import CODModal from "./_components/CODModal";
 import CarriersOptionsModal from "./_components/CarriersOptionsModal";
 import CarrierCODsModal from "./_components/CarrierCODsModal";
 import PriceCalculatorModal from "./_components/PriceCalculatorModal";
-
-/* === جديد: مدير الشركات والمناطق + إضافة شركة === */
 import CarriersManagerModal from "./_components/CarriersManagerModal";
 import ZonesManagerModal from "./_components/ZonesManagerModal";
-import AddCarrierModal from "./_components/AddCarrierModal"; // << جديد
+import AddCarrierModal from "./_components/AddCarrierModal";
 
 type Sheet =
   | "manage-carriers"
@@ -23,24 +21,82 @@ type Sheet =
   | "carrier-cods"
   | "price"
   | null;
-
-type CarrierCard = { id: string; name: string; logo?: string; active: boolean };
+type CarrierCard = {
+  id: string;
+  name: string;
+  logo?: string;
+  active: boolean;
+  support_cod?: boolean;
+};
 
 export default function ShippingIndex() {
   const [open, setOpen] = React.useState<Sheet>(null);
-  const [showAdd, setShowAdd] = React.useState(false); // << جديد
+  const [showAdd, setShowAdd] = React.useState(false);
+  const [editing, setEditing] = React.useState<CarrierCard | null>(null);
+  const [cards, setCards] = React.useState<CarrierCard[]>([]);
+  const [loading, setLoading] = React.useState(true);
 
-  // كروت شركات أعلى الصفحة (واجهة فقط حالياً)
-  const [cards, setCards] = React.useState<CarrierCard[]>([
-    { id: "c-smsa", name: "سمسا", active: true },
-    { id: "c-aymakan", name: "أي مكان", active: false },
-    { id: "c-jt", name: "جي اند تي", active: false },
-    { id: "c-aramex", name: "أرامكس", active: false },
-  ]);
+  // تحميل الشركات من الـ API عند الفتح
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch("/api/admin/shipping/companies", {
+          cache: "no-store",
+        });
+        const j = await r.json();
+        const rows = Array.isArray(j?.data) ? j.data : [];
+        setCards(
+          rows.map((x: any) => ({
+            id: x.id,
+            name: x.name,
+            active: !!x.is_active,
+            support_cod: !!x.support_cod,
+          }))
+        );
+      } catch {
+        // تجاهل مؤقتًا
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
 
-  const handleAdded = (c: CarrierCard) => {
-    setCards((xs) => [c, ...xs]);  // تظهر فورًا
-    setShowAdd(false);
+  const addCarrier = (c: CarrierCard) => setCards((xs) => [c, ...xs]);
+  const updateCarrier = (c: CarrierCard) =>
+    setCards((xs) => xs.map((x) => (x.id === c.id ? c : x)));
+  const deleteCarrier = async (id: string) => {
+    // تفاؤلي
+    const prev = cards;
+    setCards((xs) => xs.filter((x) => x.id !== id));
+    try {
+      await fetch(`/api/admin/shipping/companies/${id}`, { method: "DELETE" });
+    } catch {
+      setCards(prev);
+    }
+  };
+
+  const toggleCarrier = async (c: CarrierCard) => {
+    const next = !c.active;
+    // تفاؤلي
+    setCards((xs) =>
+      xs.map((x) => (x.id === c.id ? { ...x, active: next } : x))
+    );
+    try {
+      await fetch(`/api/admin/shipping/companies/${c.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: c.name,
+          active: next,
+          support_cod: !!c.support_cod,
+        }),
+      });
+    } catch {
+      // رجوع
+      setCards((xs) =>
+        xs.map((x) => (x.id === c.id ? { ...x, active: !next } : x))
+      );
+    }
   };
 
   const Tile = ({
@@ -73,7 +129,7 @@ export default function ShippingIndex() {
 
   return (
     <main className="px-6 py-8" dir="rtl">
-      {/* هيدر + زر إضافة شركة */}
+      {/* هيدر + زر إضافة */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">إعدادات شركات الشحن</h1>
         <button
@@ -84,22 +140,61 @@ export default function ShippingIndex() {
         </button>
       </div>
 
-      {/* شبكة كروت الشركات (شكل بسيط) */}
+      {/* كروت الشركات */}
       <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
-        {cards.map((c) => (
-          <div key={c.id} className="rounded-2xl border p-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-xl border grid place-items-center">{c.name[0]}</div>
-              <div className="font-medium">{c.name}</div>
-            </div>
-            <span className="text-xs px-2 py-1 rounded-full border">
-              {c.active ? "مفعّلة" : "معطّلة"}
-            </span>
+        {loading ? (
+          Array.from({ length: 3 }).map((_, i) => (
+            <div
+              key={i}
+              className="rounded-2xl border p-4 animate-pulse h-20 bg-zinc-50"
+            />
+          ))
+        ) : cards.length === 0 ? (
+          <div className="col-span-full text-sm text-zinc-500">
+            لا توجد شركات بعد.
           </div>
-        ))}
+        ) : (
+          cards.map((c) => (
+            <div
+              key={c.id}
+              className="rounded-2xl border p-4 flex items-center justify-between"
+            >
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-xl border grid place-items-center">
+                  {c.name?.[0] ?? "?"}
+                </div>
+                <div className="font-medium">{c.name}</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  className={`rounded-lg px-3 py-1.5 border ${
+                    c.active
+                      ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                      : ""
+                  }`}
+                  onClick={() => toggleCarrier(c)}
+                >
+                  {c.active ? "تعطيل" : "تفعيل"}
+                </button>
+                <button
+                  className="rounded-lg px-3 py-1.5 border hover:bg-zinc-50"
+                  onClick={() => setEditing(c)}
+                >
+                  تعديل
+                </button>
+                <button
+                  className="rounded-lg px-3 py-1.5 border text-red-600 hover:bg-red-50"
+                  onClick={() => deleteCarrier(c.id)}
+                >
+                  حذف
+                </button>
+              </div>
+            </div>
+          ))
+        )}
       </div>
 
-      {/* بطاقات إعداداتك كما هي */}
+      {/* بطاقات الإعدادات */}
       <div className="space-y-3">
         <Tile
           icon={<span className="text-xl">🏷️</span>}
@@ -145,40 +240,89 @@ export default function ShippingIndex() {
         />
       </div>
 
-      {/* مودال إضافة شركة — جديد */}
-      <Modal open={showAdd} onClose={() => setShowAdd(false)} title="إضافة شركة شحن">
+      {/* مودال إضافة شركة */}
+      <Modal
+        open={showAdd}
+        onClose={() => setShowAdd(false)}
+        title="إضافة شركة شحن"
+      >
         <AddCarrierModal
+          mode="create"
           onCancel={() => setShowAdd(false)}
-          onSaved={(payload) => handleAdded(payload)}
+          onSaved={(payload) => {
+            addCarrier(payload);
+            setShowAdd(false);
+          }}
         />
       </Modal>
 
-      {/* المودالات الأخرى كما هي */}
-      <Modal open={open === "manage-carriers"} onClose={() => setOpen(null)} title="شركات الشحن">
+      {/* مودال تعديل شركة */}
+      <Modal
+        open={!!editing}
+        onClose={() => setEditing(null)}
+        title="تعديل شركة شحن"
+      >
+        {editing && (
+          <AddCarrierModal
+            mode="edit"
+            initial={editing}
+            onCancel={() => setEditing(null)}
+            onSaved={(payload) => {
+              updateCarrier(payload);
+              setEditing(null);
+            }}
+          />
+        )}
+      </Modal>
+
+      {/* باقي المودالات كما هي */}
+      <Modal
+        open={open === "manage-carriers"}
+        onClose={() => setOpen(null)}
+        title="شركات الشحن"
+      >
         <CarriersManagerModal onClose={() => setOpen(null)} />
       </Modal>
-
-      <Modal open={open === "manage-zones"} onClose={() => setOpen(null)} title="المناطق والمدن">
+      <Modal
+        open={open === "manage-zones"}
+        onClose={() => setOpen(null)}
+        title="المناطق والمدن"
+      >
         <ZonesManagerModal onClose={() => setOpen(null)} />
       </Modal>
-
-      <Modal open={open === "free"} onClose={() => setOpen(null)} title="إعدادات الشحن المجاني">
+      <Modal
+        open={open === "free"}
+        onClose={() => setOpen(null)}
+        title="إعدادات الشحن المجاني"
+      >
         <FreeShippingModal onClose={() => setOpen(null)} />
       </Modal>
-
-      <Modal open={open === "cod"} onClose={() => setOpen(null)} title="شروط الدفع عند الاستلام">
+      <Modal
+        open={open === "cod"}
+        onClose={() => setOpen(null)}
+        title="شروط الدفع عند الاستلام"
+      >
         <CODModal onClose={() => setOpen(null)} />
       </Modal>
-
-      <Modal open={open === "opts"} onClose={() => setOpen(null)} title="خيارات شركات الشحن">
+      <Modal
+        open={open === "opts"}
+        onClose={() => setOpen(null)}
+        title="خيارات شركات الشحن"
+      >
         <CarriersOptionsModal onClose={() => setOpen(null)} />
       </Modal>
-
-      <Modal open={open === "carrier-cods"} onClose={() => setOpen(null)} title="قيود شركات الشحن">
+      <Modal
+        open={open === "carrier-cods"}
+        onClose={() => setOpen(null)}
+        title="قيود شركات الشحن"
+      >
         <CarrierCODsModal onClose={() => setOpen(null)} />
       </Modal>
-
-      <Modal open={open === "price"} onClose={() => setOpen(null)} title="حاسبة أسعار الشحن">
+      <Modal
+        open={open === "price"}
+        onClose={() => setOpen(null)}
+        title="حاسبة أسعار الشحن"
+      >
         <PriceCalculatorModal onClose={() => setOpen(null)} />
       </Modal>
     </main>

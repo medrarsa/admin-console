@@ -1,46 +1,88 @@
-// src/app/admin/settings/shipping/_components/AddCarrierModal.tsx
 "use client";
 import * as React from "react";
 
-type Payload = { id: string; name: string; logo?: string; active: boolean };
+type CarrierCard = { id: string; name: string; active: boolean; logo?: string };
 
 export default function AddCarrierModal({
+  mode = "create",
+  initial,
   onSaved,
   onCancel,
 }: {
-  onSaved: (c: Payload) => void;
+  mode?: "create" | "edit";
+  initial?: CarrierCard | null;
+  onSaved: (c: CarrierCard) => void;
   onCancel: () => void;
 }) {
-  const [name, setName] = React.useState("");
-  const [active, setActive] = React.useState(true);
-  const [supportCOD, setSupportCOD] = React.useState(true);
+  const [name, setName] = React.useState(initial?.name ?? "");
+  const [active, setActive] = React.useState<boolean>(initial?.active ?? true);
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
 
-  // طريقة شحن افتراضية + القيود
-  const [leadMin, setLeadMin] = React.useState<number | "">(2);
-  const [leadMax, setLeadMax] = React.useState<number | "">(5);
-  const [codFee, setCodFee] = React.useState<number | "">(7);
-  const [freeThreshold, setFreeThreshold] = React.useState<number | "">("");
+  React.useEffect(() => {
+    if (initial) {
+      setName(initial.name);
+      setActive(!!initial.active);
+    }
+  }, [initial]);
 
-  // تسعير مناطق (بدون وزن)
-  const [zoneA, setZoneA] = React.useState<number | "">(24);
-  const [zoneB, setZoneB] = React.useState<number | "">(29);
-  const [zoneC, setZoneC] = React.useState<number | "">(39);
-
-  const save = () => {
-    if (!name.trim()) return;
-    // هنا لاحقًا نستدعي API لحفظ: company + method + prices + constraints
-    const id = `c-${crypto.randomUUID()}`;
-    onSaved({ id, name: name.trim(), active });
+  const save = async () => {
+    setError(null);
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setError("اكتب اسم الشركة.");
+      return;
+    }
+    setSaving(true);
+    try {
+      if (mode === "edit" && initial?.id) {
+        const r = await fetch(`/api/admin/shipping/companies/${initial.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: trimmed, active }),
+        });
+        const j = await r.json();
+        if (!j?.success) throw new Error(j?.error?.message || "تعذّر التعديل");
+        onSaved({
+          id: j.data.id,
+          name: j.data.name,
+          active: !!j.data.is_active,
+        });
+      } else {
+        const r = await fetch("/api/admin/shipping/companies", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: trimmed, active }),
+        });
+        const j = await r.json();
+        if (!j?.success) throw new Error(j?.error?.message || "تعذّر الإضافة");
+        onSaved({
+          id: j.data.id,
+          name: j.data.name,
+          active: !!j.data.is_active,
+        });
+      }
+    } catch (e: any) {
+      setError(e?.message || "حدث خطأ غير متوقّع");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
     <form
-      onSubmit={(e) => { e.preventDefault(); save(); }}
-      className="space-y-4" dir="rtl"
+      onSubmit={(e) => {
+        e.preventDefault();
+        save();
+      }}
+      className="space-y-4"
+      dir="rtl"
     >
-      {/* بيانات الشركة */}
       <div className="rounded-xl border p-3 space-y-3">
-        <div className="font-medium">بيانات الشركة</div>
+        <div className="font-medium">
+          {mode === "edit" ? "تعديل شركة" : "بيانات الشركة"}
+        </div>
+
         <label className="block">
           <div className="mb-1 text-sm">اسم الشركة</div>
           <input
@@ -48,88 +90,40 @@ export default function AddCarrierModal({
             placeholder="Naqel / Aramex / SMSA ..."
             value={name}
             onChange={(e) => setName(e.target.value)}
+            disabled={saving}
           />
         </label>
-        <div className="flex items-center gap-4">
-          <label className="flex items-center gap-2">
-            <input type="checkbox" checked={active} onChange={(e)=>setActive(e.target.checked)} />
-            <span>فعّالة</span>
-          </label>
-          <label className="flex items-center gap-2">
-            <input type="checkbox" checked={supportCOD} onChange={(e)=>setSupportCOD(e.target.checked)} />
-            <span>تدعم الدفع عند الاستلام</span>
-          </label>
-        </div>
-      </div>
 
-      {/* طريقة الشحن + القيود */}
-      <div className="rounded-xl border p-3 space-y-3">
-        <div className="font-medium">طريقة الشحن والقيود (بدون وزن)</div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <label className="block">
-            <div className="mb-1 text-sm">المدة (أقل)</div>
-            <input className="w-full rounded-lg border px-2 py-1 text-left"
-              type="number" value={leadMin as number | undefined}
-              onChange={(e)=>setLeadMin(e.target.value === "" ? "" : Number(e.target.value))}/>
-          </label>
-          <label className="block">
-            <div className="mb-1 text-sm">المدة (أعلى)</div>
-            <input className="w-full rounded-lg border px-2 py-1 text-left"
-              type="number" value={leadMax as number | undefined}
-              onChange={(e)=>setLeadMax(e.target.value === "" ? "" : Number(e.target.value))}/>
-          </label>
-          <label className="block">
-            <div className="mb-1 text-sm">رسوم COD</div>
-            <input className="w-full rounded-lg border px-2 py-1 text-left"
-              type="number" disabled={!supportCOD}
-              value={codFee as number | undefined}
-              onChange={(e)=>setCodFee(e.target.value === "" ? "" : Number(e.target.value))}/>
-          </label>
-          <label className="block">
-            <div className="mb-1 text-sm">مجاني فوق</div>
-            <input className="w-full rounded-lg border px-2 py-1 text-left"
-              type="number" value={freeThreshold as number | undefined}
-              onChange={(e)=>setFreeThreshold(e.target.value === "" ? "" : Number(e.target.value))}/>
-          </label>
-        </div>
+        <label className="inline-flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={active}
+            onChange={(e) => setActive(e.target.checked)}
+            disabled={saving}
+          />
+          <span>فعّالة</span>
+        </label>
 
-        {/* تسعير المناطق */}
-        <div className="grid gap-2">
-          <RowZone code="A — مدن رئيسية" value={zoneA} onChange={setZoneA}/>
-          <RowZone code="B — مدن متوسطة" value={zoneB} onChange={setZoneB}/>
-          <RowZone code="C — مناطق نائية" value={zoneC} onChange={setZoneC}/>
-        </div>
+        {error && <div className="text-sm text-red-600">{error}</div>}
       </div>
 
       <div className="flex justify-end gap-2">
-        <button type="button" className="rounded-xl px-4 py-2 border" onClick={onCancel}>إلغاء</button>
-        <button type="submit" className="rounded-xl px-4 py-2 bg-zinc-900 text-white">حفظ</button>
+        <button
+          type="button"
+          className="rounded-xl px-4 py-2 border"
+          onClick={onCancel}
+          disabled={saving}
+        >
+          إلغاء
+        </button>
+        <button
+          type="submit"
+          className="rounded-xl px-4 py-2 bg-zinc-900 text-white disabled:opacity-60"
+          disabled={saving}
+        >
+          {saving ? "يحفظ..." : "حفظ"}
+        </button>
       </div>
     </form>
-  );
-}
-
-function RowZone({
-  code,
-  value,
-  onChange,
-}: {
-  code: string;
-  value: number | "";
-  onChange: (v: number | "") => void;
-}) {
-  return (
-    <label className="flex items-center justify-between rounded-xl border p-3">
-      <span className="font-medium">{code}</span>
-      <span className="flex items-center gap-2">
-        <input
-          className="w-24 rounded-lg border px-2 py-1 text-left"
-          type="number"
-          value={value as number | undefined}
-          onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
-        />
-        <span className="text-sm text-zinc-600">رس</span>
-      </span>
-    </label>
   );
 }
